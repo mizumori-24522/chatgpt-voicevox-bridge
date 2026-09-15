@@ -1,0 +1,132 @@
+# ChatGPT → VOICEVOX Bridge
+
+ChatGPT Web版の回答を、生成の途中から **VOICEVOX** の好きなキャラクター音声で
+自動的に読み上げる UserScript です。
+
+OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機能をそのまま使います。
+
+```
+声 → Aqua Voice → ChatGPT Web → この UserScript → VOICEVOX(localhost:50021) → スピーカー
+```
+
+## 必要環境
+
+- macOS
+- Chrome 系ブラウザ
+- [Tampermonkey](https://www.tampermonkey.net/)
+- VOICEVOX（アプリ、または VOICEVOX Engine 単体）
+- ChatGPT Web（Plus 等のアカウント）
+
+## 導入手順
+
+1. VOICEVOX を起動する（`http://127.0.0.1:50021` が待ち受け状態になる）
+2. このリポジトリで UserScript をビルドする
+
+   ```bash
+   npm install
+   npm run build
+   ```
+
+   `dist/chatgpt-voicevox.user.js` が生成されます。
+
+3. Tampermonkey のダッシュボードを開く →「新規スクリプトを作成」
+4. `dist/chatgpt-voicevox.user.js` の中身を全部貼り付けて保存
+   （または Tampermonkey の設定でローカルファイルへのアクセスを許可し、
+   `file://` の URL からインストールする）
+5. https://chatgpt.com を開く
+6. 右下に 🐇 VOICEVOX パネルが出る。緑の ● と `v0.xx.x` が出れば接続成功
+7. 話者を選び、「テスト発声」で音が出ることを確認
+8. 普段どおり ChatGPT へ質問すると、回答の生成途中から読み上げが始まります
+
+### 起動順
+
+```
+1. VOICEVOX を起動
+2. ブラウザを起動
+3. ChatGPT を開く
+4. パネルの接続表示を確認
+5. Aqua Voice 等で質問する
+```
+
+## パネルの操作
+
+| 項目 | 内容 |
+| --- | --- |
+| ● / ○ | VOICEVOX の接続状態（クリックでパネル開閉） |
+| 話者セレクト | `/speakers` から取得した話者・スタイル。ID はハードコードしていません |
+| 話速 / 音量 | `audio_query` の `speedScale` / `volumeScale` |
+| 🔊 ON / 🔇 OFF | 読み上げの有効・無効 |
+| ■ STOP | 再生・合成・キュー・未確定バッファを即座に破棄 |
+| コード / URL / 表 | 読まない・あることだけ伝える・読む |
+| 新しい質問で読み上げ停止 | 既定 ON |
+| テスト発声 / 再接続 | 動作確認用 |
+
+設定は `localStorage`（キー `cvb.settings.v1`）へ保存されます。
+
+## 仕組み
+
+| モジュール | 役割 |
+| --- | --- |
+| `chatgpt-adapter.ts` | ChatGPT の DOM 依存を全部ここへ隔離。UI 変更時はここだけ直す |
+| `observer.ts` | MutationObserver + 200ms ポーリング。mutation を直接 TTS へ流さない |
+| `text-diff.ts` | 「消費済み文字数」を持ち、再描画されても同じ文章を二度読まない |
+| `chunker.ts` | `。！？` 改行を境界に、35〜180 文字の自然な単位へ切り出す |
+| `speech-sanitizer.ts` | DOM 構造を根拠にコード・表・URL・引用番号を処理 |
+| `voicevox-client.ts` | `/version` `/speakers` `/audio_query` `/synthesis` |
+| `playback-queue.ts` | 合成と再生を 1 本ずつ直列化。音声は絶対に重ならない |
+| `ui.ts` | Shadow DOM のフローティングパネル（ChatGPT の CSS と干渉しない） |
+
+Markdown をテキストとしてパースするのではなく、ChatGPT が既にレンダリングした
+DOM（`<pre>` `<table>` `<a>` など）を見て判定しています。
+生成途中の未閉じコードフェンスに強いのが理由です。
+
+## CORS について
+
+`https://chatgpt.com` から `http://127.0.0.1:50021` への直接 `fetch` は
+CORS / Private Network Access で弾かれることがあります。
+そのため通信は **Tampermonkey の `GM_xmlhttpRequest`** 経由で行います。
+権限は最小限に絞っています。
+
+```
+@connect 127.0.0.1
+@connect localhost
+```
+
+`@connect *` は使っていません。
+
+## プライバシー
+
+会話内容を外部へ送信しません。通信先は以下だけです。
+
+```
+ChatGPT Web 自身
+127.0.0.1:50021 (VOICEVOX Engine)
+```
+
+- analytics / telemetry なし
+- 外部ログ送信なし
+- API キーの保存なし
+- 読み上げたテキストの永続保存なし
+
+## 開発
+
+```bash
+npm test        # 単体テスト (vitest)
+npm run typecheck
+npm run build
+```
+
+## トラブルシューティング
+
+| 症状 | 対処 |
+| --- | --- |
+| ○ 未接続 | VOICEVOX を起動してから「再接続」 |
+| 「再生がブロックされました」 | ページを一度クリックしてから再度質問する（ブラウザの自動再生制限） |
+| 読み上げが始まらない | パネルが 🔊 ON か確認。詳細設定の「デバッグログ」を ON にして Console を見る |
+| 途中から二重に読む | Console の `[Observer]` ログを添えて報告してください |
+| パネルが出ない | Tampermonkey でスクリプトが有効か、`@match` が今の URL と一致するか確認 |
+
+## 非目標（Ver.1）
+
+OpenAI API 利用 / ChatGPT Voice Mode 統合 / Aqua Voice 制御 / スマホ対応 / MCP。
+詳細は [PLAN.md](PLAN.md) を参照。
