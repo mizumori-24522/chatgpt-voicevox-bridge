@@ -3,7 +3,11 @@ import { ChatObserver } from '../src/observer';
 import { ChatGptAdapter } from '../src/chatgpt-adapter';
 import { DEFAULT_SANITIZE_OPTIONS } from '../src/speech-sanitizer';
 
-/** ChatGPT の会話 DOM を模した最小構造 */
+/**
+ * 実際の chatgpt.com (2026-09-15 時点) を写した最小構造。
+ * section[data-turn][data-turn-id] の内側に
+ * div[data-message-author-role][data-message-id] > .markdown が入る。
+ */
 class FakeChat {
   private turn = 0;
   constructor() {
@@ -16,24 +20,31 @@ class FakeChat {
     this.turn++;
     this.main.insertAdjacentHTML(
       'beforeend',
-      `<article data-testid="conversation-turn-${this.turn}">
+      `<section data-turn="user" data-turn-id="tu${this.turn}"
+                data-testid="conversation-turn-${this.turn}">
          <div data-message-author-role="user" data-message-id="u${this.turn}">
-           <div class="markdown">${text}</div>
+           <div class="markdown prose">${text}</div>
          </div>
-       </article>`,
+       </section>`,
     );
   }
   addAssistant(id: string): HTMLElement {
     this.turn++;
     this.main.insertAdjacentHTML(
       'beforeend',
-      `<article data-testid="conversation-turn-${this.turn}">
+      `<section data-turn="assistant" data-turn-id="t-${id}"
+                data-testid="conversation-turn-${this.turn}">
          <div data-message-author-role="assistant" data-message-id="${id}">
-           <div class="markdown"></div>
+           <div class="markdown prose"></div>
          </div>
-       </article>`,
+       </section>`,
     );
     return this.main.querySelector(`[data-message-id="${id}"] .markdown`) as HTMLElement;
+  }
+  /** 画面外へスクロールしたターンが仮想化で中身を落とす挙動 */
+  virtualize(id: string): void {
+    const msg = this.main.querySelector(`[data-message-id="${id}"]`);
+    msg?.remove();
   }
   startGenerating(): void {
     document.body.insertAdjacentHTML(
@@ -66,6 +77,8 @@ function makeObserver() {
 
 /** MutationObserver/rAF を待たず、内部ポーリング相当を直接叩く */
 const pump = () => vi.advanceTimersByTime(200);
+/** 本文の増加が止まって「生成完了」と判定されるまで進める */
+const settle = () => vi.advanceTimersByTime(1500);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -96,7 +109,7 @@ describe('ChatObserver', () => {
       '<p>ジャンクションとは、魔法を能力値に装備する仕組みです。たとえば力にファイガを装備します。</p>';
     pump();
     chat.stopGenerating();
-    pump();
+    settle();
 
     expect(chunks).toEqual([
       'ジャンクションとは、魔法を能力値に装備する仕組みです。',
@@ -113,7 +126,7 @@ describe('ChatObserver', () => {
     const { observer, chunks } = makeObserver();
     observer.start();
     pump();
-    pump();
+    settle();
     expect(chunks).toEqual([]);
     observer.stop();
   });
@@ -144,12 +157,48 @@ describe('ChatObserver', () => {
       '<p>次のように書きます。</p><pre><code>const answer = 42;</code></pre><p>これで動作します。</p>';
     pump();
     chat.stopGenerating();
-    pump();
+    settle();
 
     const all = chunks.join(' ');
     expect(all).not.toContain('const answer');
     expect(all).toContain('ここにコードがあります。');
     expect(all).toContain('これで動作します。');
+    observer.stop();
+  });
+
+  it('finishes reading even when the stop button is never detected', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+
+    // startGenerating() を呼ばない = 生成中フラグが一切取れないケース
+    const content = chat.addAssistant('a3');
+    content.innerHTML = '<p>停止ボタンが取れなくても最後まで読み切ります。</p>';
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('停止ボタンが取れなくても最後まで読み切ります。');
+    observer.stop();
+  });
+
+  it('survives virtualization dropping an older turn', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+
+    chat.startGenerating();
+    const c1 = chat.addAssistant('a1');
+    c1.innerHTML = '<p>最初の回答です。ここまでが一つ目です。</p>';
+    pump();
+    chat.stopGenerating();
+    settle();
+    const afterFirst = chunks.length;
+
+    // 画面外になった古いターンの中身が DOM から消える
+    chat.virtualize('a1');
+    pump();
+    settle();
+    expect(chunks.length).toBe(afterFirst);
     observer.stop();
   });
 
@@ -163,7 +212,7 @@ describe('ChatObserver', () => {
     c1.innerHTML = '<p>一つ目の回答です。これで終わりです。</p>';
     pump();
     chat.stopGenerating();
-    pump();
+    settle();
     const afterFirst = chunks.length;
 
     chat.addUser('二つ目の質問');
@@ -172,7 +221,7 @@ describe('ChatObserver', () => {
     c2.innerHTML = '<p>二つ目の回答です。まったく別の内容です。</p>';
     pump();
     chat.stopGenerating();
-    pump();
+    settle();
 
     const second = chunks.slice(afterFirst).join(' ');
     expect(second).toContain('二つ目の回答です。');

@@ -76,6 +76,24 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
 | `playback-queue.ts` | 合成と再生を 1 本ずつ直列化。音声は絶対に重ならない |
 | `ui.ts` | Shadow DOM のフローティングパネル（ChatGPT の CSS と干渉しない） |
 
+### 実測した ChatGPT の DOM (2026-09-15 / GPT-6 世代 UI)
+
+```html
+<section data-turn="assistant" data-turn-id="<uuid>"
+         data-testid="conversation-turn-10">
+  <div data-message-author-role="assistant" data-message-id="<uuid>">
+    <div class="... markdown prose ...">  ← 本文
+```
+
+- 会話は**仮想化**されており、画面外のターンでは内側の
+  `[data-message-author-role]` が DOM から消える。外側の
+  `section[data-turn]` は残るので、そちらを一次の拠り所にしている。
+- メッセージ同一性は `data-turn-id`（UUID）→ `data-message-id` の順で採用。
+- Web検索の出典は `[data-testid="webpage-citation-pill"]` なので読み上げから除外。
+- 生成中判定は停止ボタンに**依存しきらない**。本文の増加が 1.2 秒止まったら
+  生成完了とみなして残りを吐き出すため、ChatGPT がボタンの命名を変えても
+  読み上げが尻切れにならない。
+
 Markdown をテキストとしてパースするのではなく、ChatGPT が既にレンダリングした
 DOM（`<pre>` `<table>` `<a>` など）を見て判定しています。
 生成途中の未閉じコードフェンスに強いのが理由です。

@@ -76,6 +76,14 @@ describe('extractSpeechText', () => {
     expect(out.trim()).toBe('公式サイト');
   });
 
+  it('skips the web-search citation pill used by ChatGPT', () => {
+    const out = extractSpeechText(
+      dom('<p>本文です。<span data-testid="webpage-citation-pill">example.com</span></p>'),
+      opts,
+    );
+    expect(out.trim()).toBe('本文です。');
+  });
+
   it('skips citation markers and hidden nodes', () => {
     const out = extractSpeechText(
       dom('<p>本文です。<sup>1</sup><span class="sr-only">隠し</span></p>'),

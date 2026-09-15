@@ -15,6 +15,12 @@ export type ObserverDeps = {
 };
 
 const TICK_MS = 200;
+/**
+ * 本文の増加が止まってからこの時間が経てば「生成完了」とみなし、
+ * 残りバッファを吐き出す。停止ボタンの検出に失敗しても
+ * 読み上げが尻切れにならないための保険。
+ */
+const SETTLE_MS = 1200;
 
 /**
  * DOM の変化を監視し、正規化した「新しく増えた本文」だけをチャンク化して流す。
@@ -29,7 +35,7 @@ export class ChatObserver {
   private tracker = new StreamTracker();
   private chunker: SpeechChunker;
   private lastUserMessageId: string | null = null;
-  private wasGenerating = false;
+  private lastDeltaAt = 0;
 
   constructor(private deps: ObserverDeps) {
     this.chunker = new SpeechChunker(deps.getChunkerOptions());
@@ -89,38 +95,36 @@ export class ChatObserver {
 
     const generating = adapter.isGenerating();
     const latest = adapter.getLatestAssistantMessage();
-    if (!latest) {
-      this.wasGenerating = generating;
-      return;
-    }
+    if (!latest) return;
 
     if (latest.id !== this.currentMessageId) {
       log('Observer', 'new assistant message', latest.id);
       this.currentMessageId = latest.id;
       this.tracker.reset();
       this.chunker.clear();
+      this.lastDeltaAt = Date.now();
     }
 
     if (!this.deps.getEnabled()) {
       // OFF の間も本文追従だけ行い、ON にした瞬間に過去分を一気読みしない
       this.tracker.push(this.extract(latest.content));
       this.chunker.clear();
-      this.wasGenerating = generating;
       return;
     }
 
     this.chunker.setOptions(this.deps.getChunkerOptions());
 
     const delta = this.tracker.push(this.extract(latest.content));
-    if (delta) this.chunker.append(delta);
+    if (delta) {
+      this.chunker.append(delta);
+      this.lastDeltaAt = Date.now();
+    }
 
-    const finished = this.wasGenerating && !generating;
-    const chunks = this.chunker.take(finished || !generating);
+    const settled = Date.now() - this.lastDeltaAt >= SETTLE_MS;
+    const chunks = this.chunker.take(!generating && settled);
     for (const c of chunks) {
       log('Chunker', 'chunk', c);
       this.deps.onChunk(c);
     }
-
-    this.wasGenerating = generating;
   }
 }
