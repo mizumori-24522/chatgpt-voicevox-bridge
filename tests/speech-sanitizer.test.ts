@@ -52,7 +52,7 @@ function dom(html: string): Element {
 describe('extractSpeechText', () => {
   it('reads paragraph text', () => {
     expect(extractSpeechText(dom('<p>こんにちは。</p><p>元気ですか。</p>'), opts))
-      .toBe('こんにちは。\n元気ですか。\n');
+      .toBe('こんにちは。\n元気ですか。');
   });
 
   it('announces a code block instead of reading it', () => {

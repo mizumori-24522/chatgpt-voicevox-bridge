@@ -161,5 +161,7 @@ export function normalizeWhitespace(text: string): string {
     .replace(/[ \t ]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{2,}/g, '\n')
-    .replace(/^\n+/, '');
+    // 末尾の改行を残すと、次の観測で「本文が前方一致しない」判定になり
+    // 差分追跡（StreamTracker）が壊れるため必ず削る。
+    .replace(/^\s+|\s+$/g, '');
 }

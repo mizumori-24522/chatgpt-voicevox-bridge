@@ -79,8 +79,9 @@ export class SpeechChunker {
       if (HARD_BOUNDARY.test(buf[i])) {
         let end = i + 1;
         while (end < buf.length && TRAILING.test(buf[end])) end++;
-        // 直後がまだ届いていない可能性があるので、末尾ぴったりなら次を待つ
-        if (!final && end >= buf.length && buf.length < maximumChunkLength) return 0;
+        // 「！？」のように記号が連続し得る場合だけ、次の文字が届くのを待つ。
+        // 「。」で待つと一文しかない回答が生成完了まで喋られず遅延になる。
+        if (!final && end >= buf.length && /[！？!?]$/.test(buf)) return 0;
         return end;
       }
     }
