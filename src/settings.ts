@@ -24,7 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   styleId: null,
   speakerLabel: '',
-  speedScale: 1.0,
+  speedScale: 1.15,
   volumeScale: 1.0,
   pitchScale: 0.0,
   intonationScale: 1.0,

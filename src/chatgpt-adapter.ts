@@ -36,6 +36,23 @@ export class ChatGptAdapter {
     return (main as HTMLElement | null) ?? document.body;
   }
 
+  /** assistant ターンを出現順に全部返す（任意の回答を指定して読ませる用） */
+  assistantTurns(): HTMLElement[] {
+    return this.turns().filter(
+      (t) =>
+        t.getAttribute('data-turn') === 'assistant' ||
+        (t.getAttribute('data-turn') === null && t.querySelector(ASSISTANT_SEL) !== null),
+    );
+  }
+
+  /** ターンから本文要素を取り出す */
+  contentOfTurn(turn: HTMLElement): Element {
+    const message = turn.matches(ASSISTANT_SEL)
+      ? turn
+      : (turn.querySelector<HTMLElement>(ASSISTANT_SEL) ?? turn);
+    return this.findContentRoot(message);
+  }
+
   private turns(): HTMLElement[] {
     const byTurn = document.querySelectorAll<HTMLElement>(TURN_SEL);
     if (byTurn.length > 0) return Array.from(byTurn);

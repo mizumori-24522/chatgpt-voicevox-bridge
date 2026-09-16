@@ -57,6 +57,21 @@ class FakeChat {
   }
 }
 
+/** 起動後に会話がまとめて描画される（リロード直後）状況 */
+class FakeChat2 {
+  renderExistingAnswer(html: string): void {
+    document.getElementById('main')!.insertAdjacentHTML(
+      'beforeend',
+      `<section data-turn="assistant" data-turn-id="t-existing"
+                data-testid="conversation-turn-2">
+         <div data-message-author-role="assistant" data-message-id="existing">
+           <div class="markdown prose">${html}</div>
+         </div>
+       </section>`,
+    );
+  }
+}
+
 function makeObserver() {
   const chunks: string[] = [];
   let stops = 0;
@@ -121,12 +136,32 @@ describe('ChatObserver', () => {
   it('does not read messages that already existed at startup', () => {
     const chat = new FakeChat();
     const content = chat.addAssistant('old');
-    content.innerHTML = '<p>これは起動前からある古い回答です。読んではいけません。</p>';
+    content.innerHTML =
+      '<p>これは起動前からある古い回答です。読んではいけません。仮想化されていても読んではいけません。</p>';
 
     const { observer, chunks } = makeObserver();
     observer.start();
     pump();
     settle();
+    expect(chunks).toEqual([]);
+    observer.stop();
+  });
+
+  it('does not read an existing answer that renders after startup (page reload)', () => {
+    // リロード直後は main が空で、会話は少し遅れて描画される。
+    // これを「新しい回答」と誤認して読み上げてしまうバグの回帰テスト。
+    new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    const chat2 = new FakeChat2();
+    chat2.renderExistingAnswer(
+      '<p>開いただけの過去の回答です。ページ描画が遅れただけで、新規生成ではありません。</p>',
+    );
+    pump();
+    settle();
+
     expect(chunks).toEqual([]);
     observer.stop();
   });
@@ -166,12 +201,34 @@ describe('ChatObserver', () => {
     observer.stop();
   });
 
+  it('still reads a genuinely new answer that grows from empty', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    // 生成中フラグは取れないが、質問は送られている = 本物の新規回答
+    chat.addUser('新しい質問');
+    pump();
+    const content = chat.addAssistant('fresh');
+    content.innerHTML = '<p>新しい</p>';
+    pump();
+    content.innerHTML = '<p>新しい回答が少しずつ伸びてきています。これは読むべきです。</p>';
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('これは読むべきです。');
+    observer.stop();
+  });
+
   it('finishes reading even when the stop button is never detected', () => {
     const chat = new FakeChat();
     const { observer, chunks } = makeObserver();
     observer.start();
 
     // startGenerating() を呼ばない = 生成中フラグが一切取れないケース
+    chat.addUser('質問です');
+    pump();
     const content = chat.addAssistant('a3');
     content.innerHTML = '<p>停止ボタンが取れなくても最後まで読み切ります。</p>';
     pump();

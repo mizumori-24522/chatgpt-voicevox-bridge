@@ -6,6 +6,7 @@ export type UiCallbacks = {
   onStop: () => void;
   onReconnect: () => void;
   onTestSpeak: () => void;
+  onSpeakSelection: () => void;
   onChange: (patch: Partial<Settings>) => void;
 };
 
@@ -97,6 +98,11 @@ export class UiPanel {
           <button class="btn" id="toggle">🔊 ON</button>
           <button class="btn stop" id="stop">■ STOP</button>
         </div>
+        <div class="row">
+          <button class="btn" id="speakSel" title="ページ上で選択した部分だけを読み上げます">
+            🔈 選択した部分を読む
+          </button>
+        </div>
         <div class="status" id="status"></div>
         <details>
           <summary>詳細設定</summary>
@@ -138,7 +144,7 @@ export class UiPanel {
       volumeVal: q('volumeVal'), toggle: q('toggle'), stop: q('stop'),
       status: q('status'), codeMode: q('codeMode'), urlMode: q('urlMode'),
       tableMode: q('tableMode'), stopOnNew: q('stopOnNew'), debug: q('debug'),
-      test: q('test'), reconnect: q('reconnect'),
+      test: q('test'), reconnect: q('reconnect'), speakSel: q('speakSel'),
     };
 
     this.root.querySelector('.head')!.addEventListener('click', () => {
@@ -149,6 +155,9 @@ export class UiPanel {
     this.el.toggle.addEventListener('click', () => this.cb.onToggleEnabled(!this.settings.enabled));
     this.el.stop.addEventListener('click', () => this.cb.onStop());
     this.el.test.addEventListener('click', () => this.cb.onTestSpeak());
+    // mousedown で選択が消える環境があるため、押す前の選択を保持する
+    this.el.speakSel.addEventListener('mousedown', (e) => e.preventDefault());
+    this.el.speakSel.addEventListener('click', () => this.cb.onSpeakSelection());
     this.el.reconnect.addEventListener('click', () => this.cb.onReconnect());
 
     (this.el.speaker as HTMLSelectElement).addEventListener('change', (e) => {

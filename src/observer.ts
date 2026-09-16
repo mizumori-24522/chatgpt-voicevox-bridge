@@ -36,6 +36,14 @@ export class ChatObserver {
   private chunker: SpeechChunker;
   private lastUserMessageId: string | null = null;
   private lastDeltaAt = 0;
+  /**
+   * 「今から現れる回答は読み上げてよい」状態か。
+   *
+   * ChatGPT の会話は仮想化されており、ページを開き直しただけでも
+   * 回答が「後から DOM に現れる」ため、出現だけでは新規生成と区別できない。
+   * 新しい質問を観測したか、生成中を観測したときだけ読み上げを解禁する。
+   */
+  private armed = false;
 
   constructor(private deps: ObserverDeps) {
     this.chunker = new SpeechChunker(deps.getChunkerOptions());
@@ -44,12 +52,6 @@ export class ChatObserver {
   start(): void {
     const root = this.deps.adapter.getObserverRoot();
     this.lastUserMessageId = this.deps.adapter.getLatestUserMessageId();
-    const latest = this.deps.adapter.getLatestAssistantMessage();
-    if (latest) {
-      // 起動時点で既に画面にある回答は読み上げない
-      this.currentMessageId = latest.id;
-      this.tracker.push(this.extract(latest.content));
-    }
 
     this.mo = new MutationObserver(() => this.schedule());
     this.mo.observe(root, { childList: true, subtree: true, characterData: true });
@@ -89,20 +91,30 @@ export class ChatObserver {
     const userId = adapter.getLatestUserMessageId();
     if (userId !== null && userId !== this.lastUserMessageId) {
       this.lastUserMessageId = userId;
+      this.armed = true;
       log('Observer', 'new user message', userId);
       this.deps.onNewUserMessage();
     }
 
     const generating = adapter.isGenerating();
+    if (generating) this.armed = true;
     const latest = adapter.getLatestAssistantMessage();
     if (!latest) return;
 
     if (latest.id !== this.currentMessageId) {
-      log('Observer', 'new assistant message', latest.id);
       this.currentMessageId = latest.id;
       this.tracker.reset();
       this.chunker.clear();
       this.lastDeltaAt = Date.now();
+
+      if (!this.armed) {
+        // 質問もしていないのに現れた回答 = 前から存在したもの。
+        // 読み上げず、本文だけ取り込んで追従する。
+        this.tracker.push(this.extract(latest.content));
+        log('Observer', '既存の回答として無言で取り込み', latest.id);
+        return;
+      }
+      log('Observer', 'new assistant message', latest.id);
     }
 
     if (!this.deps.getEnabled()) {
