@@ -60,6 +60,7 @@ function main(): void {
     urlMode: settings.urlMode,
     codeMode: settings.codeMode,
     tableMode: settings.tableMode,
+    readSymbols: settings.readSymbols,
   });
   const chunkerOptions = (): ChunkerOptions => ({
     minimumChunkLength: settings.minimumChunkLength,
@@ -154,6 +155,11 @@ function main(): void {
   // 過去の回答へ「この回答を読む」ボタンを差し込む。
   // 会話は仮想化されるので、新しく現れたターンへ定期的に付け直す。
   window.setInterval(() => {
+    try {
+      ui.ensureMounted();
+    } catch (e) {
+      warn('UI', 'パネルの再設置に失敗', e);
+    }
     if (!settings.enabled) return;
     try {
       syncReadButtons(adapter.assistantTurns(), (turn) => speakElement(adapter.contentOfTurn(turn)));

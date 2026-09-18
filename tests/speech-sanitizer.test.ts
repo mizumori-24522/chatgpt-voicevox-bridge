@@ -49,6 +49,39 @@ function dom(html: string): Element {
   return el;
 }
 
+describe('expandSymbols', () => {
+  const on = { ...opts, readSymbols: true };
+
+  it('reads the symbols inside a filename', () => {
+    expect(sanitizeMarkdown('ChatGPT_VOICEVOX_PLAN.md を開く', on))
+      .toBe('ChatGPT アンダーバー VOICEVOX アンダーバー PLAN ドット md を開く');
+  });
+
+  it('reads path separators', () => {
+    expect(sanitizeMarkdown('src/main.ts', on)).toBe('src スラッシュ main ドット ts');
+  });
+
+  it('leaves ordinary prose alone', () => {
+    expect(sanitizeMarkdown('これは普通の文章です。', on)).toBe('これは普通の文章です。');
+  });
+
+  it('does not touch number-only sequences like dates', () => {
+    expect(sanitizeMarkdown('2026/09/18 の話', on)).toBe('2026/09/18 の話');
+  });
+
+  it('is off by default', () => {
+    expect(sanitizeMarkdown('src/main.ts', opts)).toBe('src/main.ts');
+  });
+
+  it('applies to link text in rendered DOM', () => {
+    const out = extractSpeechText(
+      dom('<a href="/x">ChatGPT_VOICEVOX_Bridge_PLAN.md を開く</a>'),
+      on,
+    );
+    expect(out.trim()).toContain('アンダーバー');
+  });
+});
+
 describe('stripDecorations', () => {
   it('removes emoji that would make VOICEVOX pause', () => {
     expect(sanitizeMarkdown('根強い人気という印象です 🎭🔮', opts)).toBe('根強い人気という印象です');

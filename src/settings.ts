@@ -17,6 +17,7 @@ export type Settings = {
   urlMode: UrlMode;
   codeMode: CodeMode;
   tableMode: 'skip' | 'announce' | 'read';
+  readSymbols: boolean;
   stopOnNewQuestion: boolean;
   engineOrigin: string;
   debug: boolean;
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   urlMode: 'announce',
   codeMode: 'announce',
   tableMode: 'announce',
+  readSymbols: false,
   stopOnNewQuestion: true,
   engineOrigin: 'http://127.0.0.1:50021',
   debug: false,

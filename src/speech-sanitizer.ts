@@ -6,6 +6,11 @@ export type SanitizeOptions = {
   tableMode: 'skip' | 'announce' | 'read';
   /** インラインコードをそのまま読む上限文字数 */
   inlineCodeMaxLength: number;
+  /**
+   * ファイル名・パス・識別子の中の記号を読み上げるか。
+   * 例: ChatGPT_VOICEVOX_PLAN.md → チャットジーピーティー アンダーバー …
+   */
+  readSymbols: boolean;
 };
 
 export const DEFAULT_SANITIZE_OPTIONS: SanitizeOptions = {
@@ -13,7 +18,37 @@ export const DEFAULT_SANITIZE_OPTIONS: SanitizeOptions = {
   codeMode: 'announce',
   tableMode: 'announce',
   inlineCodeMaxLength: 24,
+  readSymbols: false,
 };
+
+/** 識別子の中で読み上げ対象にする記号 */
+const SYMBOL_WORDS: Record<string, string> = {
+  _: ' アンダーバー ',
+  '-': ' ハイフン ',
+  '.': ' ドット ',
+  '/': ' スラッシュ ',
+  ':': ' コロン ',
+  '+': ' プラス ',
+  '#': ' シャープ ',
+  '@': ' アット ',
+  '~': ' チルダ ',
+  '*': ' アスタリスク ',
+};
+
+/**
+ * `ChatGPT_VOICEVOX_PLAN.md` や `src/main.ts` のような識別子の中の記号を
+ * 読み仮名へ置き換える。
+ *
+ * 英数字に挟まれた記号だけが対象。普通の文中のハイフンや、
+ * 日付の 2026/09/18 のような数字だけの並びは巻き込まない。
+ */
+export function expandSymbols(text: string): string {
+  const TOKEN = /[A-Za-z0-9]+(?:[_\-./:+#@~*][A-Za-z0-9]+)+/g;
+  return text.replace(TOKEN, (token) => {
+    if (!/[A-Za-z]/.test(token)) return token;
+    return token.replace(/[_\-./:+#@~*]/g, (sym) => SYMBOL_WORDS[sym] ?? sym);
+  });
+}
 
 const URL_RE = /https?:\/\/[^\s<>"'）)」』】]+/g;
 const BLOCK_TAGS = new Set([
@@ -36,7 +71,8 @@ export function extractSpeechText(root: Element, opts: SanitizeOptions): string 
 
 function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
   if (node.nodeType === Node.TEXT_NODE) {
-    out.push(replaceUrls(node.nodeValue ?? '', opts.urlMode));
+    const t = replaceUrls(node.nodeValue ?? '', opts.urlMode);
+    out.push(opts.readSymbols ? expandSymbols(t) : t);
     return;
   }
   if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -62,7 +98,11 @@ function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
 
   if (tag === 'CODE' && el.closest('pre') === null) {
     const t = (el.textContent ?? '').trim();
-    out.push(t.length <= opts.inlineCodeMaxLength ? t : 'コード');
+    if (t.length > opts.inlineCodeMaxLength) {
+      out.push('コード');
+      return;
+    }
+    out.push(opts.readSymbols ? expandSymbols(t) : t);
     return;
   }
 
@@ -73,7 +113,8 @@ function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
     if (textIsUrl || text.length === 0) {
       out.push(linkPlaceholder(opts.urlMode, href));
     } else {
-      out.push(replaceUrls(text, opts.urlMode));
+      const t = replaceUrls(text, opts.urlMode);
+      out.push(opts.readSymbols ? expandSymbols(t) : t);
     }
     return;
   }
@@ -151,6 +192,7 @@ export function sanitizeMarkdown(input: string, opts: SanitizeOptions): string {
   t = t.replace(/~~([^~]+)~~/g, '$1');
 
   t = replaceUrls(t, opts.urlMode);
+  if (opts.readSymbols) t = expandSymbols(t);
 
   return normalizeWhitespace(t);
 }

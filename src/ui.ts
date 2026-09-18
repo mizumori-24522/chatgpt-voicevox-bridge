@@ -130,6 +130,8 @@ export class UiPanel {
                 <option value="announce">あることだけ伝える</option>
                 <option value="read">読む</option>
               </select></div>
+            <label class="chk" title="ファイル名やパスの中の _ - . / を読み上げます">
+              <input type="checkbox" id="readSymbols">記号を読む（_ - . /）</label>
             <label class="chk"><input type="checkbox" id="stopOnNew">新しい質問で読み上げ停止</label>
             <label class="chk"><input type="checkbox" id="debug">デバッグログ</label>
             <div class="row">
@@ -150,6 +152,7 @@ export class UiPanel {
       toggle: q('toggle'), stop: q('stop'),
       status: q('status'), codeMode: q('codeMode'), urlMode: q('urlMode'),
       tableMode: q('tableMode'), stopOnNew: q('stopOnNew'), debug: q('debug'),
+      readSymbols: q('readSymbols'),
       test: q('test'), reconnect: q('reconnect'), speakSel: q('speakSel'),
     };
 
@@ -196,6 +199,9 @@ export class UiPanel {
         this.cb.onChange({ [key]: (e.target as HTMLSelectElement).value } as Partial<Settings>);
       });
     }
+    this.el.readSymbols.addEventListener('change', (e) => {
+      this.cb.onChange({ readSymbols: (e.target as HTMLInputElement).checked });
+    });
     this.el.stopOnNew.addEventListener('change', (e) => {
       this.cb.onChange({ stopOnNewQuestion: (e.target as HTMLInputElement).checked });
     });
@@ -215,6 +221,7 @@ export class UiPanel {
     (this.el.codeMode as HTMLSelectElement).value = s.codeMode;
     (this.el.urlMode as HTMLSelectElement).value = s.urlMode;
     (this.el.tableMode as HTMLSelectElement).value = s.tableMode;
+    (this.el.readSymbols as HTMLInputElement).checked = s.readSymbols;
     (this.el.stopOnNew as HTMLInputElement).checked = s.stopOnNewQuestion;
     (this.el.debug as HTMLInputElement).checked = s.debug;
     this.el.toggle.textContent = s.enabled ? '🔊 ON' : '🔇 OFF';
@@ -246,6 +253,16 @@ export class UiPanel {
   setStatus(text: string, isError = false): void {
     this.el.status.textContent = text;
     this.el.status.classList.toggle('err', isError);
+  }
+
+  /**
+   * ChatGPT は SPA なので、ページ遷移で body ごと作り直されると
+   * パネルが DOM から外れて消える。外れていたら付け直す。
+   */
+  ensureMounted(): void {
+    if (!document.body.contains(this.host)) {
+      document.body.appendChild(this.host);
+    }
   }
 
   destroy(): void {
