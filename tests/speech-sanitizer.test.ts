@@ -49,6 +49,21 @@ function dom(html: string): Element {
   return el;
 }
 
+describe('stripDecorations', () => {
+  it('removes emoji that would make VOICEVOX pause', () => {
+    expect(sanitizeMarkdown('根強い人気という印象です 🎭🔮', opts)).toBe('根強い人気という印象です');
+  });
+
+  it('keeps ordinary text and numbers intact', () => {
+    expect(sanitizeMarkdown('2026年の話です。', opts)).toBe('2026年の話です。');
+  });
+
+  it('removes emoji from rendered DOM too', () => {
+    const out = extractSpeechText(dom('<p>面白いです 📜✨</p>'), opts);
+    expect(out.trim()).toBe('面白いです');
+  });
+});
+
 describe('extractSpeechText', () => {
   it('reads paragraph text', () => {
     expect(extractSpeechText(dom('<p>こんにちは。</p><p>元気ですか。</p>'), opts))

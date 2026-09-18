@@ -16,17 +16,27 @@ export type PlaybackSnapshot = {
   speaking: boolean;
 };
 
+/** 再生中に先読み合成しておくチャンク数。文と文の間の無音をなくすための肝。 */
+const LOOKAHEAD = 2;
+/** notify の取りこぼしで固まらないための保険 */
+const WAIT_TIMEOUT_MS = 150;
+
 /**
- * テキスト → 合成 → 再生 を 1 本ずつ直列に処理するキュー。
- * 同時再生・音声の重なりを構造的に起こさない。
+ * テキスト → 合成 → 再生 のパイプライン。
+ *
+ * 合成ループと再生ループを分けてあるので、ある文を喋っている間に
+ * 次の文の合成が進む。再生は常に 1 本だけで、音声は重ならない。
  */
 export class PlaybackQueue {
   private textQueue: string[] = [];
-  private running = false;
+  private audioQueue: ArrayBuffer[] = [];
+  private synthRunning = false;
+  private playRunning = false;
   private currentAudio: HTMLAudioElement | null = null;
   private currentUrl: string | null = null;
   private abortController: AbortController | null = null;
-  /** stopAll のたびに増やす。古い非同期処理は世代が違えば破棄する。 */
+  private waiters: (() => void)[] = [];
+  /** stopAll のたびに増やす。世代が違う非同期処理は破棄する。 */
   private generation = 0;
 
   constructor(private deps: QueueDeps) {}
@@ -36,27 +46,54 @@ export class PlaybackQueue {
     if (!t) return;
     this.textQueue.push(t);
     log('Playback', 'enqueue', t.slice(0, 40));
+    this.notify();
     this.emit();
-    void this.pump();
+    void this.synthLoop();
+    void this.playLoop();
   }
 
   stopAll(): void {
     this.generation++;
     this.textQueue = [];
+    this.audioQueue = [];
     this.abortController?.abort();
     this.abortController = null;
     this.teardownAudio();
-    this.running = false;
+    this.synthRunning = false;
+    this.playRunning = false;
+    this.notify();
     log('Playback', 'stopAll');
     this.emit();
   }
 
   get snapshot(): PlaybackSnapshot {
-    return { queued: this.textQueue.length, speaking: this.currentAudio !== null };
+    return {
+      queued: this.textQueue.length + this.audioQueue.length,
+      speaking: this.currentAudio !== null,
+    };
   }
 
   private emit(): void {
     this.deps.onStateChange(this.snapshot);
+  }
+
+  private notify(): void {
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const w of waiters) w();
+  }
+
+  private wait(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      this.waiters.push(finish);
+      setTimeout(finish, WAIT_TIMEOUT_MS);
+    });
   }
 
   private teardownAudio(): void {
@@ -73,15 +110,20 @@ export class PlaybackQueue {
     }
   }
 
-  private async pump(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
+  /** 先読みしながらテキストを音声へ変換し続ける */
+  private async synthLoop(): Promise<void> {
+    if (this.synthRunning) return;
+    this.synthRunning = true;
     const gen = this.generation;
 
     try {
-      while (this.textQueue.length > 0 && gen === this.generation) {
-        const text = this.textQueue.shift()!;
-        this.emit();
+      while (gen === this.generation) {
+        if (this.textQueue.length === 0) break;
+
+        if (this.audioQueue.length >= LOOKAHEAD) {
+          await this.wait();
+          continue;
+        }
 
         const styleId = this.deps.getStyleId();
         if (styleId === null) {
@@ -90,15 +132,20 @@ export class PlaybackQueue {
           break;
         }
 
-        let wav: ArrayBuffer;
+        const text = this.textQueue.shift()!;
         this.abortController = new AbortController();
         try {
-          wav = await this.deps.client.synthesize(
+          const wav = await this.deps.client.synthesize(
             text,
             styleId,
             this.deps.getParams(),
             this.abortController.signal,
           );
+          if (gen !== this.generation) break;
+          this.audioQueue.push(wav);
+          this.notify();
+          this.emit();
+          void this.playLoop();
         } catch (e) {
           if (e instanceof AbortError || gen !== this.generation) break;
           warn('Playback', 'synthesis failed', e);
@@ -108,15 +155,38 @@ export class PlaybackQueue {
         } finally {
           this.abortController = null;
         }
+      }
+    } finally {
+      this.synthRunning = false;
+      this.notify();
+      this.emit();
+      if (gen === this.generation && this.textQueue.length > 0) void this.synthLoop();
+    }
+  }
 
-        if (gen !== this.generation) break;
+  /** 合成済みの音声を 1 本ずつ順番に再生し続ける */
+  private async playLoop(): Promise<void> {
+    if (this.playRunning) return;
+    this.playRunning = true;
+    const gen = this.generation;
+
+    try {
+      while (gen === this.generation) {
+        if (this.audioQueue.length === 0) {
+          // まだ合成中なら待つ。合成もテキストも無ければ終了。
+          if (!this.synthRunning && this.textQueue.length === 0) break;
+          await this.wait();
+          continue;
+        }
+        const wav = this.audioQueue.shift()!;
+        this.notify();
+        this.emit();
         await this.play(wav, gen);
       }
     } finally {
-      this.running = false;
+      this.playRunning = false;
       this.emit();
-      // stopAll 以外で新しい要素が積まれていたら継続する
-      if (gen === this.generation && this.textQueue.length > 0) void this.pump();
+      if (gen === this.generation && this.audioQueue.length > 0) void this.playLoop();
     }
   }
 
@@ -133,6 +203,7 @@ export class PlaybackQueue {
       const finish = () => {
         if (this.currentAudio === audio) this.teardownAudio();
         else URL.revokeObjectURL(url);
+        this.notify();
         this.emit();
         resolve();
       };

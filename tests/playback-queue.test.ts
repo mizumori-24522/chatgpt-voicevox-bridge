@@ -14,13 +14,16 @@ class FakeAudio {
   constructor(_url: string) {
     FakeAudio.instances.push(this);
   }
+  static playMs = 5;
+  static events: string[] = [];
   play(): Promise<void> {
     FakeAudio.playing++;
     FakeAudio.maxConcurrent = Math.max(FakeAudio.maxConcurrent, FakeAudio.playing);
     setTimeout(() => {
       FakeAudio.playing--;
+      FakeAudio.events.push('play-end');
       this.onended?.();
-    }, 5);
+    }, FakeAudio.playMs);
     return Promise.resolve();
   }
   pause(): void {
@@ -55,6 +58,8 @@ beforeEach(() => {
   FakeAudio.playing = 0;
   FakeAudio.maxConcurrent = 0;
   FakeAudio.instances = [];
+  FakeAudio.events = [];
+  FakeAudio.playMs = 5;
   vi.stubGlobal('Audio', FakeAudio);
   vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
   vi.stubGlobal('Blob', class {});
@@ -106,6 +111,30 @@ describe('PlaybackQueue', () => {
     await tick(50);
     expect(errors.length).toBe(1);
     expect(queue.snapshot.queued).toBe(0);
+  });
+
+  it('synthesizes the next chunk while the current one is still playing', async () => {
+    // 直列だと文と文の間に合成時間ぶんの無音が入る。先読みできているか。
+    const events: string[] = [];
+    FakeAudio.playMs = 40;
+    const { queue } = setup(async (text) => {
+      await new Promise((r) => setTimeout(r, 30));
+      events.push(`synth-done:${text}`);
+      FakeAudio.events.push(`synth-done:${text}`);
+      return new ArrayBuffer(8);
+    });
+
+    queue.enqueue('いち。');
+    queue.enqueue('に。');
+    queue.enqueue('さん。');
+    await tick(300);
+
+    const secondSynth = FakeAudio.events.indexOf('synth-done:に。');
+    const firstPlayEnd = FakeAudio.events.indexOf('play-end');
+    expect(secondSynth).toBeGreaterThanOrEqual(0);
+    expect(firstPlayEnd).toBeGreaterThanOrEqual(0);
+    expect(secondSynth).toBeLessThan(firstPlayEnd);
+    expect(FakeAudio.maxConcurrent).toBe(1);
   });
 
   it('accepts new text after a stop', async () => {

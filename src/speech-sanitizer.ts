@@ -155,8 +155,19 @@ export function sanitizeMarkdown(input: string, opts: SanitizeOptions): string {
   return normalizeWhitespace(t);
 }
 
+/**
+ * 絵文字・装飾記号。VOICEVOX へそのまま渡すと不自然な間が入るので落とす。
+ * 異体字セレクタ・ZWJ・肌色修飾・国旗も一緒に消す。
+ */
+const DECORATION_RE =
+  /[\p{Extended_Pictographic}\p{Emoji_Presentation}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0E}\u{FE0F}\u{200D}\u{20E3}]/gu;
+
+export function stripDecorations(text: string): string {
+  return text.replace(DECORATION_RE, '');
+}
+
 export function normalizeWhitespace(text: string): string {
-  return text
+  return stripDecorations(text)
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t ]+/g, ' ')
     .replace(/ *\n */g, '\n')
