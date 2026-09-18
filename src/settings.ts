@@ -49,14 +49,36 @@ export const DEFAULT_SETTINGS: Settings = {
   maximumChunkLength: 180,
 };
 
-const KEY = 'cvb.settings.v1';
+const KEY = 'cvb.settings.v2';
+const LEGACY_KEY = 'cvb.settings.v1';
+
+/**
+ * v1 の設定を v2 へ移行する。
+ *
+ * v1 では codeMode の既定が 'announce'（毎回伝える）だったため、
+ * そのまま引き継ぐと「ここに図があります」を1回の回答で何度も言う。
+ * 意図して選んだ値ではないので 'announce-once' へ寄せる。
+ */
+export function migrate(old: Partial<Settings>): Partial<Settings> {
+  const next = { ...old };
+  if (next.codeMode === 'announce') next.codeMode = 'announce-once';
+  return next;
+}
 
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
-    const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    if (raw) {
+      return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+    }
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const migrated = migrate(JSON.parse(legacy) as Partial<Settings>);
+      const settings = { ...DEFAULT_SETTINGS, ...migrated };
+      saveSettings(settings);
+      return settings;
+    }
+    return { ...DEFAULT_SETTINGS };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
