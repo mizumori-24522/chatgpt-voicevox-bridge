@@ -1,5 +1,6 @@
 import type { Settings } from './settings';
 import type { StyleOption } from './voicevox-client';
+import { VoicePicker, PICKER_CSS } from './voice-picker';
 
 export type UiCallbacks = {
   onToggleEnabled: (v: boolean) => void;
@@ -8,6 +9,7 @@ export type UiCallbacks = {
   onTestSpeak: () => void;
   onSpeakSelection: () => void;
   onChange: (patch: Partial<Settings>) => void;
+  loadIcon: (styleId: number) => Promise<string | null>;
 };
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
@@ -19,11 +21,6 @@ const CSS = `
   width: 260px; font: 12px/1.5 -apple-system, "Hiragino Sans", sans-serif;
   color: #1b1b1b; background: #fff; border: 1px solid #d5d5d5;
   border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); overflow: hidden;
-}
-@media (prefers-color-scheme: dark) {
-  .panel { color: #ececec; background: #202123; border-color: #3a3a3a; }
-  select, input[type=number] { color: #ececec; background: #2b2c2f; border-color: #4a4a4a; }
-  .btn { background: #2b2c2f; border-color: #4a4a4a; color: #ececec; }
 }
 .head { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   border-bottom: 1px solid rgba(128,128,128,.25); cursor: pointer; }
@@ -49,6 +46,15 @@ input[type=range] { flex: 1; min-width: 0; }
 .val { flex: none; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 details summary { cursor: pointer; opacity: .8; font-size: 11px; }
 .chk { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+
+/* ダーク配色は必ず最後に置く。前に置くと通常の指定に上書きされ、白地に白文字になる */
+@media (prefers-color-scheme: dark) {
+  .panel { color: #ececec; background: #202123; border-color: #3a3a3a; }
+  select, input[type=number] { color: #ececec; background: #2b2c2f; border-color: #4a4a4a; }
+  .btn { background: #2b2c2f; border-color: #4a4a4a; color: #ececec; }
+  .btn.on { background: #22c55e; border-color: #22c55e; color: #fff; }
+  .btn.stop { background: #ef4444; border-color: #ef4444; color: #fff; }
+}
 `;
 
 export class UiPanel {
@@ -56,6 +62,7 @@ export class UiPanel {
   private root: ShadowRoot;
   private el!: Record<string, HTMLElement>;
   private collapsed = false;
+  private picker!: VoicePicker;
 
   constructor(
     private settings: Settings,
@@ -70,7 +77,7 @@ export class UiPanel {
 
   private render(): void {
     const style = document.createElement('style');
-    style.textContent = CSS;
+    style.textContent = CSS + PICKER_CSS;
 
     const panel = document.createElement('div');
     panel.className = 'panel';
@@ -81,9 +88,7 @@ export class UiPanel {
         <span id="conn" style="font-size:11px;opacity:.75">未接続</span>
       </div>
       <div class="body" id="body">
-        <div class="row">
-          <select id="speaker"><option value="">話者を取得中…</option></select>
-        </div>
+        <div class="row" id="voiceSlot"></div>
         <div class="row">
           <label>話速</label>
           <input type="range" id="speed" min="0.5" max="2" step="0.05">
@@ -147,7 +152,7 @@ export class UiPanel {
 
     const q = <T extends HTMLElement>(id: string) => this.root.getElementById(id) as T;
     this.el = {
-      dot: q('dot'), conn: q('conn'), body: q('body'), speaker: q('speaker'),
+      dot: q('dot'), conn: q('conn'), body: q('body'), voiceSlot: q('voiceSlot'),
       speed: q('speed'), speedVal: q('speedVal'), volume: q('volume'),
       volumeVal: q('volumeVal'), gap: q('gap'), gapVal: q('gapVal'),
       toggle: q('toggle'), stop: q('stop'),
@@ -160,6 +165,7 @@ export class UiPanel {
     this.root.querySelector('.head')!.addEventListener('click', () => {
       this.collapsed = !this.collapsed;
       this.el.body.classList.toggle('hidden', this.collapsed);
+      this.picker.close();
     });
 
     this.el.toggle.addEventListener('click', () => this.cb.onToggleEnabled(!this.settings.enabled));
@@ -170,13 +176,13 @@ export class UiPanel {
     this.el.speakSel.addEventListener('click', () => this.cb.onSpeakSelection());
     this.el.reconnect.addEventListener('click', () => this.cb.onReconnect());
 
-    (this.el.speaker as HTMLSelectElement).addEventListener('change', (e) => {
-      const sel = e.target as HTMLSelectElement;
-      this.cb.onChange({
-        styleId: Number(sel.value),
-        speakerLabel: sel.options[sel.selectedIndex].text,
-      });
+    this.picker = new VoicePicker({
+      root: this.root,
+      host: this.host,
+      loadIcon: this.cb.loadIcon,
+      onSelect: (opt) => this.cb.onChange({ styleId: opt.styleId, speakerLabel: opt.label }),
     });
+    this.el.voiceSlot.appendChild(this.picker.element);
 
     const range = (key: 'speedScale' | 'volumeScale', input: HTMLElement, out: HTMLElement): void => {
       input.addEventListener('input', () => {
@@ -227,23 +233,11 @@ export class UiPanel {
     (this.el.debug as HTMLInputElement).checked = s.debug;
     this.el.toggle.textContent = s.enabled ? '🔊 ON' : '🔇 OFF';
     this.el.toggle.classList.toggle('on', s.enabled);
-    if (s.styleId !== null) (this.el.speaker as HTMLSelectElement).value = String(s.styleId);
+    this.picker.setSelected(s.styleId);
   }
 
   setSpeakers(options: StyleOption[], selectedId: number | null): void {
-    const sel = this.el.speaker as HTMLSelectElement;
-    sel.innerHTML = '';
-    if (options.length === 0) {
-      sel.innerHTML = '<option value="">話者なし</option>';
-      return;
-    }
-    for (const o of options) {
-      const opt = document.createElement('option');
-      opt.value = String(o.styleId);
-      opt.textContent = o.label;
-      sel.appendChild(opt);
-    }
-    if (selectedId !== null) sel.value = String(selectedId);
+    this.picker.setOptions(options, selectedId);
   }
 
   setConnection(state: ConnectionState, text: string): void {

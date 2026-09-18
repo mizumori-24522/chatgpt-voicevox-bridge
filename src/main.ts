@@ -9,6 +9,7 @@ import { DEFAULT_SANITIZE_OPTIONS, extractSpeechText, type SanitizeOptions } fro
 import { SpeechChunker, type ChunkerOptions } from './chunker';
 import { syncReadButtons, removeReadButtons, getSelectionFragment } from './message-actions';
 import { gmAvailable } from './http';
+import { IconCache } from './icon-cache';
 
 function main(): void {
   let settings: Settings = loadSettings();
@@ -16,6 +17,7 @@ function main(): void {
 
   const client = new VoicevoxClient(settings.engineOrigin);
   const adapter = new ChatGptAdapter();
+  const icons = new IconCache(client);
   let styleOptions: StyleOption[] = [];
 
   const queue = new PlaybackQueue({
@@ -52,6 +54,7 @@ function main(): void {
     onReconnect: () => void connect(),
     onTestSpeak: () => queue.enqueue('ボイスボックス接続テストです。'),
     onSpeakSelection: () => speakSelection(),
+    loadIcon: (styleId) => icons.icon(styleId),
     onChange: (patch) => update(patch),
   });
 
@@ -125,6 +128,7 @@ function main(): void {
       const version = await client.version();
       const speakers = await client.speakers();
       styleOptions = flattenStyles(speakers);
+      icons.setOptions(styleOptions);
       const chosen = resolveStyle(styleOptions, settings.styleId);
       ui.setSpeakers(styleOptions, chosen?.styleId ?? null);
       if (chosen && chosen.styleId !== settings.styleId) {

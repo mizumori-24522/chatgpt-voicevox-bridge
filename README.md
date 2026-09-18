@@ -53,7 +53,7 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
 | 項目 | 内容 |
 | --- | --- |
 | ● / ○ | VOICEVOX の接続状態（クリックでパネル開閉） |
-| 話者セレクト | `/speakers` から取得した話者・スタイル。ID はハードコードしていません |
+| 話者（顔アイコン付き） | 押すと「キャラクター → スタイル」の2段メニュー。左のキャラに乗せると右にスタイルが出る。上の欄で「ささやき」のように絞り込める |
 | 話速 / 音量 | `audio_query` の `speedScale` / `volumeScale` |
 | 文間 | チャンク末尾の無音 `postPhonemeLength`。箇条書きの移りの速さに効く |
 | 🔊 ON / 🔇 OFF | 読み上げの有効・無効 |
@@ -93,6 +93,8 @@ VOICEVOX 本体の **「読み方＆アクセント辞書」** がそのまま�
 | `voicevox-client.ts` | `/version` `/speakers` `/audio_query` `/synthesis` |
 | `playback-queue.ts` | 合成ループと再生ループを分離。喋りながら次を先読み合成する |
 | `ui.ts` | Shadow DOM のフローティングパネル（ChatGPT の CSS と干渉しない） |
+| `voice-picker.ts` | キャラクター → スタイルの2段メニュー |
+| `icon-cache.ts` | 顔アイコンを必要な分だけ取り、同じものは二度取らない |
 | `message-actions.ts` | 各回答へ「この回答を読む」ボタンを差し込む |
 
 ### 実測した ChatGPT の DOM (2026-09-15 / GPT-6 世代 UI)
@@ -130,6 +132,16 @@ VOICEVOX 本体の **「読み方＆アクセント辞書」** がそのまま�
 Markdown をテキストとしてパースするのではなく、ChatGPT が既にレンダリングした
 DOM（`<pre>` `<table>` `<a>` など）を見て判定しています。
 生成途中の未閉じコードフェンスに強いのが理由です。
+
+## キャラクター画像
+
+顔アイコンは VOICEVOX Engine の `/speaker_info` から取る。既定のままだとサンプル音声まで
+base64 で同梱されて 1 キャラ 5MB を超えるので、`resource_format=url` で URL だけ受け取り、
+画像は表示するものだけ個別に取りに行く。
+
+chatgpt.com のページから `http://127.0.0.1` の画像を `<img>` で直接読むことはできない
+（Private Network Access で止まる）。`GM_xmlhttpRequest` でバイト列を取り、`blob:` URL に
+変換して表示している。
 
 ## CORS について
 
