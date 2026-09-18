@@ -20,23 +20,25 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
 ## 導入手順
 
 1. VOICEVOX を起動する（`http://127.0.0.1:50021` が待ち受け状態になる）
-2. このリポジトリで UserScript をビルドする
+2. Chrome に [Tampermonkey](https://www.tampermonkey.net/) を入れる
+3. `chrome://extensions` で Tampermonkey の「詳細」を開き、
+   **「ユーザー スクリプトを許可する」を ON** にする
+4. 次の URL を Chrome で開く → Tampermonkey のインストール画面が出るので「インストール」
 
-   ```bash
-   npm install
-   npm run build
+   ```
+   https://raw.githubusercontent.com/mizumori-24522/chatgpt-voicevox-bridge/main/dist/chatgpt-voicevox.user.js
    ```
 
-   `dist/chatgpt-voicevox.user.js` が生成されます。
-
-3. Tampermonkey のダッシュボードを開く →「新規スクリプトを作成」
-4. `dist/chatgpt-voicevox.user.js` の中身を全部貼り付けて保存
-   （または Tampermonkey の設定でローカルファイルへのアクセスを許可し、
-   `file://` の URL からインストールする）
 5. https://chatgpt.com を開く
-6. 右下に 🐇 VOICEVOX パネルが出る。緑の ● と `v0.xx.x` が出れば接続成功
-7. 話者を選び、「テスト発声」で音が出ることを確認
+6. 右下に ● VOICEVOX パネルが出る。緑の ● と `v0.xx.x` が出れば接続成功
+7. 話者を選び、「詳細設定 → テスト発声」で音が出ることを確認
 8. 普段どおり ChatGPT へ質問すると、回答の生成途中から読み上げが始まります
+
+### 更新
+
+新しい版が出ると **Tampermonkey が自動で取り込みます**（既定で 1 日 1 回確認）。
+すぐに欲しいときは、Tampermonkey のダッシュボードで「ユーティリティ」→
+「インストール済みスクリプトの更新を確認」。
 
 ### 起動順
 
@@ -179,10 +181,23 @@ ChatGPT Web 自身
 ## 開発
 
 ```bash
+npm install
 npm test        # 単体テスト (vitest)
 npm run typecheck
 npm run build
 ```
+
+### 新しい版を配布する
+
+Tampermonkey は `@version` が上がったときだけ更新を取り込む。
+**版を上げずに push しても、利用者には届かない。**
+
+```bash
+npm run release        # 0.2.0 → 0.3.0（機能追加）
+npm run release:patch  # 0.2.0 → 0.2.1（修正のみ）
+```
+
+テスト → 版上げ → ビルドまで行うので、あとは `dist/` ごとコミットして push する。
 
 **編集しているのは `src/` の TypeScript であって、Tampermonkey の中のコードではない。**
 `npm run build` で `dist/chatgpt-voicevox.user.js` を作り直し、それを
@@ -190,7 +205,8 @@ Tampermonkey へ入れ直して初めて反映される。
 
 ### 毎回入れ直したくない場合
 
-Tampermonkey のスクリプトを1行だけにして、ビルド成果物を直接読ませる。
+Tampermonkey のスクリプトを殻だけにして、手元のビルド成果物を直接読ませる。
+（このファイルは各自の Mac のパスを含むので、リポジトリには入れていない）
 
 ```js
 // ==UserScript==

@@ -1,2 +1,10 @@
 node_modules
-dist
+.DS_Store
+
+# ビルド成果物のうち、配布用の UserScript だけは GitHub に載せる
+# （Tampermonkey の自動更新がこの URL を見に行くため）
+dist/*
+!dist/chatgpt-voicevox.user.js
+
+# 自分の Mac 専用の開発用シム（ローカルの絶対パスを含む）
+dev-shim.user.js
