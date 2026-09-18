@@ -115,7 +115,8 @@ export class UiPanel {
             <div class="row"><label>コード</label>
               <select id="codeMode">
                 <option value="skip">読まない</option>
-                <option value="announce">あることだけ伝える</option>
+                <option value="announce-once">最初の1回だけ伝える</option>
+                <option value="announce">毎回あることを伝える</option>
                 <option value="read">読む</option>
               </select></div>
             <div class="row"><label>URL</label>

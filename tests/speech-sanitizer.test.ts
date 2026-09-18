@@ -49,6 +49,51 @@ function dom(html: string): Element {
   return el;
 }
 
+describe('コードブロックの知らせ方', () => {
+  const art = [
+    '┌──────────┐',
+    '│ フォルダA │',
+    '├──────────┤',
+    '│ フォルダB │',
+    '└──────────┘',
+  ].join('\n');
+
+  it('calls a line-art block a diagram, not code', () => {
+    const out = extractSpeechText(dom(`<pre><code>${art}</code></pre>`), opts);
+    expect(out.trim()).toBe('ここに図があります。');
+  });
+
+  it('still calls real code code', () => {
+    const out = extractSpeechText(dom('<pre><code>const answer = 42;</code></pre>'), opts);
+    expect(out.trim()).toBe('ここにコードがあります。');
+  });
+
+  it('announces only the first block when set to announce-once', () => {
+    const once = { ...opts, codeMode: 'announce-once' as const };
+    const html =
+      '<p>まず。</p><pre><code>A</code></pre>' +
+      '<p>つぎに。</p><pre><code>B</code></pre>' +
+      '<p>さいごに。</p><pre><code>C</code></pre>';
+    const out = extractSpeechText(dom(html), once);
+    expect(out.match(/があります。/g)?.length).toBe(1);
+    expect(out).toContain('さいごに。');
+  });
+
+  it('announces every block when set to announce', () => {
+    const every = { ...opts, codeMode: 'announce' as const };
+    const html = '<pre><code>A</code></pre><p>間。</p><pre><code>B</code></pre>';
+    const out = extractSpeechText(dom(html), every);
+    expect(out.match(/があります。/g)?.length).toBe(2);
+  });
+
+  it('counts blocks per message, not across calls', () => {
+    const once = { ...opts, codeMode: 'announce-once' as const };
+    const html = '<pre><code>A</code></pre>';
+    expect(extractSpeechText(dom(html), once)).toContain('あります。');
+    expect(extractSpeechText(dom(html), once)).toContain('あります。');
+  });
+});
+
 describe('expandSymbols', () => {
   const on = { ...opts, readSymbols: true };
 

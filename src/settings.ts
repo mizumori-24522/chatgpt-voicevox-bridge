@@ -1,5 +1,5 @@
 export type UrlMode = 'skip' | 'announce' | 'read';
-export type CodeMode = 'skip' | 'announce' | 'read';
+export type CodeMode = 'skip' | 'announce-once' | 'announce' | 'read';
 
 export type Settings = {
   enabled: boolean;
@@ -38,7 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   postPhonemeLength: 0.05,
   pauseLengthScale: 0.9,
   urlMode: 'announce',
-  codeMode: 'announce',
+  codeMode: 'announce-once',
   tableMode: 'announce',
   readSymbols: false,
   stopOnNewQuestion: true,

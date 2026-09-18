@@ -15,7 +15,7 @@ export type SanitizeOptions = {
 
 export const DEFAULT_SANITIZE_OPTIONS: SanitizeOptions = {
   urlMode: 'announce',
-  codeMode: 'announce',
+  codeMode: 'announce-once',
   tableMode: 'announce',
   inlineCodeMaxLength: 24,
   readSymbols: false,
@@ -65,11 +65,14 @@ const BLOCK_TAGS = new Set([
  */
 export function extractSpeechText(root: Element, opts: SanitizeOptions): string {
   const parts: string[] = [];
-  walk(root, opts, parts);
+  walk(root, opts, parts, { blocks: 0 });
   return normalizeWhitespace(parts.join(''));
 }
 
-function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
+/** 1つのメッセージ内で何個目のブロックかを数えるための状態 */
+type WalkState = { blocks: number };
+
+function walk(node: Node, opts: SanitizeOptions, out: string[], state: WalkState): void {
   if (node.nodeType === Node.TEXT_NODE) {
     const t = replaceUrls(node.nodeValue ?? '', opts.urlMode);
     out.push(opts.readSymbols ? expandSymbols(t) : t);
@@ -83,8 +86,16 @@ function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
   if (isHidden(el) || isCitation(el)) return;
 
   if (tag === 'PRE') {
-    out.push(opts.codeMode === 'read' ? `\n${el.textContent ?? ''}\n` : '');
-    if (opts.codeMode === 'announce') out.push('\nここにコードがあります。\n');
+    if (opts.codeMode === 'read') {
+      out.push(`\n${el.textContent ?? ''}\n`);
+      return;
+    }
+    state.blocks++;
+    // 「最初だけ知らせる」= 2個目以降は黙る。
+    // 図やコードが何度も出てくる回答で、同じ台詞を繰り返さないため。
+    if (opts.codeMode === 'skip') return;
+    if (opts.codeMode === 'announce-once' && state.blocks > 1) return;
+    out.push(isDiagram(el.textContent ?? '') ? '\nここに図があります。\n' : '\nここにコードがあります。\n');
     return;
   }
 
@@ -123,8 +134,19 @@ function walk(node: Node, opts: SanitizeOptions, out: string[]): void {
 
   const isBlock = BLOCK_TAGS.has(tag);
   if (isBlock) out.push('\n');
-  for (const child of Array.from(el.childNodes)) walk(child, opts, out);
+  for (const child of Array.from(el.childNodes)) walk(child, opts, out, state);
   if (isBlock) out.push('\n');
+}
+
+/**
+ * コードブロックの中身が、プログラムではなく罫線で描いた図かどうか。
+ * 記号と空白が大半を占め、単語がほとんど無いものを図とみなす。
+ */
+export function isDiagram(text: string): boolean {
+  const body = text.replace(/\s/g, '');
+  if (body.length === 0) return false;
+  const boxChars = (body.match(/[|｜│─━┃┌┐└┘├┤┬┴┼＋+\-=_*▲▼◀▶←→↑↓]/g) ?? []).length;
+  return boxChars / body.length >= 0.3;
 }
 
 function isHidden(el: Element): boolean {
@@ -163,9 +185,13 @@ export function sanitizeMarkdown(input: string, opts: SanitizeOptions): string {
   let t = input;
 
   // フェンス付きコードブロック（未閉じも含む）
-  t = t.replace(/```[\s\S]*?(?:```|$)/g, () =>
-    opts.codeMode === 'announce' ? '\nここにコードがあります。\n' : '\n',
-  );
+  let fenceCount = 0;
+  t = t.replace(/```([\s\S]*?)(?:```|$)/g, (_m, body: string) => {
+    fenceCount++;
+    if (opts.codeMode === 'skip') return '\n';
+    if (opts.codeMode === 'announce-once' && fenceCount > 1) return '\n';
+    return isDiagram(body) ? '\nここに図があります。\n' : '\nここにコードがあります。\n';
+  });
 
   // インラインコード
   t = t.replace(/`([^`\n]+)`/g, (_m, code: string) =>
