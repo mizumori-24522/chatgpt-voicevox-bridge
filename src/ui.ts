@@ -84,7 +84,7 @@ export class UiPanel {
     panel.innerHTML = `
       <div class="head" part="head">
         <span class="dot disconnected" id="dot"></span>
-        <span class="title">🐇 VOICEVOX</span>
+        <span class="title">VOICEVOX</span>
         <span id="conn" style="font-size:11px;opacity:.75">未接続</span>
       </div>
       <div class="body" id="body">

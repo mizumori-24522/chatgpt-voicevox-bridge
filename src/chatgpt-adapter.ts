@@ -135,6 +135,42 @@ export class ChatGptAdapter {
     );
   }
 
+  /**
+   * 質問の送信操作を検出する。「読み上げを解禁してよい」の一番確かな根拠。
+   *
+   * ChatGPT 側がイベントを止めても拾えるよう、capture で document に付ける。
+   * 日本語入力の変換確定の Enter（isComposing）は送信ではないので除外する。
+   */
+  onSubmit(cb: () => void): void {
+    const inComposer = (t: EventTarget | null): boolean => {
+      if (!(t instanceof Element)) return false;
+      const composer = this.getComposer();
+      return composer !== null && (composer === t || composer.contains(t));
+    };
+    const hasText = (): boolean => (this.getComposer()?.textContent ?? '').trim().length > 0;
+
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+        if (!inComposer(e.target) || !hasText()) return;
+        cb();
+      },
+      true,
+    );
+    document.addEventListener(
+      'click',
+      (e) => {
+        const t = e.target;
+        if (!(t instanceof Element)) return;
+        if (t.closest('[data-testid="send-button"], button[aria-label*="送信"], button[aria-label*="Send"]')) {
+          cb();
+        }
+      },
+      true,
+    );
+  }
+
   probe(): { ok: boolean; detail: string } {
     const turns = this.turns().length;
     const composer = this.getComposer() !== null;

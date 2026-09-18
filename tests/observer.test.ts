@@ -166,8 +166,9 @@ describe('ChatObserver', () => {
     observer.stop();
   });
 
-  it('fires onNewUserMessage when a question is sent', () => {
+  it('fires onNewUserMessage when a follow-up question is sent', () => {
     const chat = new FakeChat();
+    chat.addUser('前の質問');
     const { observer, getStops } = makeObserver();
     observer.start();
     pump();
@@ -177,6 +178,26 @@ describe('ChatObserver', () => {
     pump();
     expect(getStops()).toBe(1);
     pump();
+    expect(getStops()).toBe(1);
+    observer.stop();
+  });
+
+  it('does not treat a question rendered on page load as a new one', () => {
+    const chat = new FakeChat();
+    const { observer, getStops } = makeObserver();
+    observer.start();
+    pump();
+    chat.addUser('描画が遅れただけの過去の質問');
+    pump();
+    expect(getStops()).toBe(0);
+    observer.stop();
+  });
+
+  it('fires onNewUserMessage on submit', () => {
+    new FakeChat();
+    const { observer, getStops } = makeObserver();
+    observer.start();
+    observer.notifySubmitted();
     expect(getStops()).toBe(1);
     observer.stop();
   });
@@ -201,6 +222,118 @@ describe('ChatObserver', () => {
     observer.stop();
   });
 
+  it('does not read when a reload renders both the question and the answer late', () => {
+    // 実機で起きたバグ: リロード直後は main が空で、少し遅れて
+    // 「過去の質問」と「過去の回答」がまとめて描画される。
+    // 過去の質問の出現を「今、質問が送られた」と誤認して読み上げていた。
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    chat.addUser('VoiceVoxテスト用に短く返答してください');
+    const c = chat.addAssistant('past');
+    c.innerHTML = '<p>もちろんです。VOICEVOXの音声テスト、こちらは正常に返答中です。</p>';
+    pump();
+    settle();
+
+    expect(chunks).toEqual([]);
+    observer.stop();
+  });
+
+  it('does not read when navigating to another chat in the sidebar', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    // SPA 遷移: URL が変わって別の会話がまとめて描画される
+    history.pushState({}, '', '/c/other-chat');
+    document.getElementById('main')!.innerHTML = '';
+    chat.addUser('別の会話の質問');
+    const c = chat.addAssistant('other');
+    c.innerHTML = '<p>別の会話の、前からある回答です。読んではいけません。</p>';
+    pump();
+    settle();
+
+    expect(chunks).toEqual([]);
+    observer.stop();
+    history.pushState({}, '', '/');
+  });
+
+  it('reads the answer after a question is submitted in a brand-new chat', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    // 新規チャットでは送信前に既知の質問が無い。送信操作そのものを根拠にする。
+    observer.notifySubmitted();
+    history.pushState({}, '', '/c/new-chat');
+    chat.addUser('はじめての質問');
+    pump();
+    const c = chat.addAssistant('first');
+    c.innerHTML = '<p>はじめての回答です。これは読むべきです。</p>';
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('これは読むべきです。');
+    observer.stop();
+    history.pushState({}, '', '/');
+  });
+
+  it('reads the answer to a follow-up question in an open chat', () => {
+    const chat = new FakeChat();
+    chat.addUser('前の質問');
+    chat.addAssistant('prev').innerHTML = '<p>前の回答です。これは読まない。</p>';
+
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+    settle();
+    expect(chunks).toEqual([]);
+
+    // 送信検出が取れなくても、同じ会話に質問が増えたことで分かる
+    chat.addUser('次の質問');
+    pump();
+    const c = chat.addAssistant('next');
+    c.innerHTML = '<p>次の回答です。これは読むべきです。</p>';
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('これは読むべきです。');
+    expect(chunks.join(' ')).not.toContain('これは読まない');
+    observer.stop();
+  });
+
+  it('does not keep reading later chats after one answer (armed is consumed)', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    chat.addUser('質問');
+    pump();
+    chat.addAssistant('a').innerHTML = '<p>今の質問への回答です。読む。</p>';
+    pump();
+    settle();
+    const n = chunks.length;
+    expect(n).toBeGreaterThan(0);
+
+    // 別の会話へ移動 → そこの最新回答は読まない
+    history.pushState({}, '', '/c/elsewhere');
+    document.getElementById('main')!.innerHTML = '';
+    chat.addUser('よその質問');
+    chat.addAssistant('b').innerHTML = '<p>よその会話の前からある回答です。読まない。</p>';
+    pump();
+    settle();
+
+    expect(chunks.length).toBe(n);
+    observer.stop();
+    history.pushState({}, '', '/');
+  });
+
   it('still reads a genuinely new answer that grows from empty', () => {
     const chat = new FakeChat();
     const { observer, chunks } = makeObserver();
@@ -208,6 +341,7 @@ describe('ChatObserver', () => {
     pump();
 
     // 生成中フラグは取れないが、質問は送られている = 本物の新規回答
+    observer.notifySubmitted();
     chat.addUser('新しい質問');
     pump();
     const content = chat.addAssistant('fresh');
@@ -227,6 +361,7 @@ describe('ChatObserver', () => {
     observer.start();
 
     // startGenerating() を呼ばない = 生成中フラグが一切取れないケース
+    observer.notifySubmitted();
     chat.addUser('質問です');
     pump();
     const content = chat.addAssistant('a3');
@@ -284,5 +419,59 @@ describe('ChatObserver', () => {
     expect(second).toContain('二つ目の回答です。');
     expect(second).not.toContain('一つ目の回答');
     observer.stop();
+  });
+});
+
+describe('ChatGptAdapter.onSubmit', () => {
+  function composer(text: string) {
+    document.body.innerHTML = `<form><div id="prompt-textarea" contenteditable="true">${text}</div>
+      <button data-testid="send-button" type="button">送信</button></form>`;
+    return document.getElementById('prompt-textarea')!;
+  }
+  const enter = (init: KeyboardEventInit = {}) =>
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, ...init });
+
+  it('fires on Enter in the composer', () => {
+    const box = composer('質問です');
+    const cb = vi.fn();
+    new ChatGptAdapter().onSubmit(cb);
+    box.dispatchEvent(enter());
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores Enter that confirms a Japanese IME conversion', () => {
+    const box = composer('しつもん');
+    const cb = vi.fn();
+    new ChatGptAdapter().onSubmit(cb);
+    box.dispatchEvent(enter({ isComposing: true }));
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('ignores Shift+Enter (newline) and an empty composer', () => {
+    const box = composer('質問');
+    const cb = vi.fn();
+    new ChatGptAdapter().onSubmit(cb);
+    box.dispatchEvent(enter({ shiftKey: true }));
+    box.textContent = '';
+    box.dispatchEvent(enter());
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('fires on the send button', () => {
+    composer('質問');
+    const cb = vi.fn();
+    new ChatGptAdapter().onSubmit(cb);
+    (document.querySelector('[data-testid="send-button"]') as HTMLElement).click();
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores Enter typed outside the composer', () => {
+    composer('質問');
+    const other = document.createElement('input');
+    document.body.appendChild(other);
+    const cb = vi.fn();
+    new ChatGptAdapter().onSubmit(cb);
+    other.dispatchEvent(enter());
+    expect(cb).not.toHaveBeenCalled();
   });
 });

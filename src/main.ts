@@ -154,6 +154,7 @@ function main(): void {
   }
 
   observer.start();
+  adapter.onSubmit(() => observer.notifySubmitted());
   void connect();
 
   // 過去の回答へ「この回答を読む」ボタンを差し込む。

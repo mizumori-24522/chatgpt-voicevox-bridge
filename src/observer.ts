@@ -40,13 +40,26 @@ export class ChatObserver {
    * 「今から現れる回答は読み上げてよい」状態か。
    *
    * ChatGPT の会話は仮想化されており、ページを開き直しただけでも
-   * 回答が「後から DOM に現れる」ため、出現だけでは新規生成と区別できない。
-   * 新しい質問を観測したか、生成中を観測したときだけ読み上げを解禁する。
+   * 質問と回答が「後から DOM に現れる」ため、出現だけでは新規と区別できない。
+   * 解禁するのは次のいずれかを観測したときだけ:
+   *   1. 送信操作そのもの（notifySubmitted）
+   *   2. 同じ会話の中で質問が増えた
+   *   3. 生成中
+   * 解禁は回答 1 つを読み始めたら使い切る。
    */
   private armed = false;
+  /** lastUserMessageId をどの会話で記録したか。会話が変わったら基準を捨てる。 */
+  private conversationPath = location.pathname;
 
   constructor(private deps: ObserverDeps) {
     this.chunker = new SpeechChunker(deps.getChunkerOptions());
+  }
+
+  /** 入力欄での送信操作を検出したときに呼ぶ */
+  notifySubmitted(): void {
+    this.armed = true;
+    log('Observer', '送信を検出');
+    this.deps.onNewUserMessage();
   }
 
   start(): void {
@@ -87,13 +100,29 @@ export class ChatObserver {
   private tick(): void {
     const adapter = this.deps.adapter;
 
+    // --- 会話の切り替え検出（SPA 遷移・新規チャットの URL 確定） ---
+    if (location.pathname !== this.conversationPath) {
+      this.conversationPath = location.pathname;
+      // 別の会話で記録した「最後の質問」は基準にならない。
+      // ここを捨てないと、遷移先の過去の質問を「新しい質問」と誤認する。
+      this.lastUserMessageId = null;
+      log('Observer', '会話が切り替わった', location.pathname);
+    }
+
     // --- 新しい user メッセージ検出 ---
     const userId = adapter.getLatestUserMessageId();
     if (userId !== null && userId !== this.lastUserMessageId) {
+      const known = this.lastUserMessageId !== null;
       this.lastUserMessageId = userId;
-      this.armed = true;
-      log('Observer', 'new user message', userId);
-      this.deps.onNewUserMessage();
+      if (known) {
+        // 同じ会話の中で質問が増えた = 本当に送られた
+        this.armed = true;
+        log('Observer', 'new user message', userId);
+        this.deps.onNewUserMessage();
+      } else {
+        // 基準が無い状態で現れた質問 = 描画されただけの過去の質問
+        log('Observer', '既存の質問を基準として記録', userId);
+      }
     }
 
     const generating = adapter.isGenerating();
@@ -115,6 +144,8 @@ export class ChatObserver {
         return;
       }
       log('Observer', 'new assistant message', latest.id);
+      // 解禁はこの回答で使い切る。別の会話へ移っても読み続けないため。
+      this.armed = false;
     }
 
     if (!this.deps.getEnabled()) {
