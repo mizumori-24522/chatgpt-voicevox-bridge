@@ -45,7 +45,15 @@ function setup(synth?: (text: string, signal?: AbortSignal) => Promise<ArrayBuff
   const queue = new PlaybackQueue({
     client,
     getStyleId: () => 1,
-    getParams: () => ({ speedScale: 1, volumeScale: 1, pitchScale: 0, intonationScale: 1 }),
+    getParams: () => ({
+      speedScale: 1,
+      volumeScale: 1,
+      pitchScale: 0,
+      intonationScale: 1,
+      prePhonemeLength: 0,
+      postPhonemeLength: 0.05,
+      pauseLengthScale: 1,
+    }),
     onError: (m) => errors.push(m),
     onStateChange: () => {},
   });

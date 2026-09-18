@@ -94,6 +94,11 @@ export class UiPanel {
           <input type="range" id="volume" min="0" max="2" step="0.05">
           <span class="val" id="volumeVal"></span>
         </div>
+        <div class="row" title="文と文の間の無音。小さいほど箇条書きの移りが速くなります">
+          <label>文間</label>
+          <input type="range" id="gap" min="0" max="0.3" step="0.01">
+          <span class="val" id="gapVal"></span>
+        </div>
         <div class="row">
           <button class="btn" id="toggle">🔊 ON</button>
           <button class="btn stop" id="stop">■ STOP</button>
@@ -141,7 +146,8 @@ export class UiPanel {
     this.el = {
       dot: q('dot'), conn: q('conn'), body: q('body'), speaker: q('speaker'),
       speed: q('speed'), speedVal: q('speedVal'), volume: q('volume'),
-      volumeVal: q('volumeVal'), toggle: q('toggle'), stop: q('stop'),
+      volumeVal: q('volumeVal'), gap: q('gap'), gapVal: q('gapVal'),
+      toggle: q('toggle'), stop: q('stop'),
       status: q('status'), codeMode: q('codeMode'), urlMode: q('urlMode'),
       tableMode: q('tableMode'), stopOnNew: q('stopOnNew'), debug: q('debug'),
       test: q('test'), reconnect: q('reconnect'), speakSel: q('speakSel'),
@@ -168,7 +174,7 @@ export class UiPanel {
       });
     });
 
-    const range = (key: 'speedScale' | 'volumeScale', input: HTMLElement, out: HTMLElement) => {
+    const range = (key: 'speedScale' | 'volumeScale', input: HTMLElement, out: HTMLElement): void => {
       input.addEventListener('input', () => {
         const v = Number((input as HTMLInputElement).value);
         out.textContent = v.toFixed(2);
@@ -177,6 +183,13 @@ export class UiPanel {
     };
     range('speedScale', this.el.speed, this.el.speedVal);
     range('volumeScale', this.el.volume, this.el.volumeVal);
+
+    // 「文間」は postPhonemeLength（チャンク末尾の無音）を直接動かす
+    this.el.gap.addEventListener('input', () => {
+      const v = Number((this.el.gap as HTMLInputElement).value);
+      this.el.gapVal.textContent = v.toFixed(2);
+      this.cb.onChange({ postPhonemeLength: v });
+    });
 
     for (const key of ['codeMode', 'urlMode', 'tableMode'] as const) {
       this.el[key].addEventListener('change', (e) => {
@@ -197,6 +210,8 @@ export class UiPanel {
     this.el.speedVal.textContent = s.speedScale.toFixed(2);
     (this.el.volume as HTMLInputElement).value = String(s.volumeScale);
     this.el.volumeVal.textContent = s.volumeScale.toFixed(2);
+    (this.el.gap as HTMLInputElement).value = String(s.postPhonemeLength);
+    this.el.gapVal.textContent = s.postPhonemeLength.toFixed(2);
     (this.el.codeMode as HTMLSelectElement).value = s.codeMode;
     (this.el.urlMode as HTMLSelectElement).value = s.urlMode;
     (this.el.tableMode as HTMLSelectElement).value = s.tableMode;

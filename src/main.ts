@@ -26,6 +26,9 @@ function main(): void {
       volumeScale: settings.volumeScale,
       pitchScale: settings.pitchScale,
       intonationScale: settings.intonationScale,
+      prePhonemeLength: settings.prePhonemeLength,
+      postPhonemeLength: settings.postPhonemeLength,
+      pauseLengthScale: settings.pauseLengthScale,
     }),
     onError: (msg) => {
       ui.setStatus(msg, true);

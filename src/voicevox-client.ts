@@ -10,6 +10,9 @@ export type SynthesisParams = {
   volumeScale: number;
   pitchScale: number;
   intonationScale: number;
+  prePhonemeLength: number;
+  postPhonemeLength: number;
+  pauseLengthScale: number;
 };
 
 export class VoicevoxClient {
@@ -59,10 +62,11 @@ export class VoicevoxClient {
     })) as string;
 
     const query = JSON.parse(queryText) as Record<string, unknown>;
-    query.speedScale = params.speedScale;
-    query.volumeScale = params.volumeScale;
-    query.pitchScale = params.pitchScale;
-    query.intonationScale = params.intonationScale;
+    // エンジンのバージョンによって存在しないキーがある。
+    // 知らないキーを足すと 422 になり得るので、元からあるものだけ書き換える。
+    for (const [key, value] of Object.entries(params)) {
+      if (key in query) query[key] = value;
+    }
 
     log('VOICEVOX', 'synthesis', { styleId, len: text.length });
 

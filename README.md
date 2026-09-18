@@ -55,6 +55,7 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
 | ● / ○ | VOICEVOX の接続状態（クリックでパネル開閉） |
 | 話者セレクト | `/speakers` から取得した話者・スタイル。ID はハードコードしていません |
 | 話速 / 音量 | `audio_query` の `speedScale` / `volumeScale` |
+| 文間 | チャンク末尾の無音 `postPhonemeLength`。箇条書きの移りの速さに効く |
 | 🔊 ON / 🔇 OFF | 読み上げの有効・無効 |
 | 🔈 選択した部分を読む | ページ上でドラッグ選択した範囲だけを読む |
 | ■ STOP | 再生・合成・キュー・未確定バッファを即座に破棄 |
@@ -99,6 +100,10 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
   生成中を観測したときにだけ読み上げを解禁している。
 - 文と文の間に無音を作らないため、**再生中に次のチャンクを先読み合成**する
   （既定2つ先まで）。再生そのものは常に1本だけで、音声は重ならない。
+- VOICEVOX は既定で 1 チャンクの前後に 0.1 秒ずつ無音を付ける。箇条書きのように
+  短い項目が連続すると、これが項目ごとの間として積み上がる。既定を
+  `prePhonemeLength=0.0` / `postPhonemeLength=0.05` / `pauseLengthScale=0.9` に
+  下げてある（実測で 1 チャンクあたり約 0.13 秒短縮）。
 - 絵文字は読み上げ前に除去する。VOICEVOX へ渡すと不自然な間が入るため。
 - 生成中判定は停止ボタンに**依存しきらない**。本文の増加が 1.2 秒止まったら
   生成完了とみなして残りを吐き出すため、ChatGPT がボタンの命名を変えても
@@ -143,6 +148,29 @@ npm test        # 単体テスト (vitest)
 npm run typecheck
 npm run build
 ```
+
+**編集しているのは `src/` の TypeScript であって、Tampermonkey の中のコードではない。**
+`npm run build` で `dist/chatgpt-voicevox.user.js` を作り直し、それを
+Tampermonkey へ入れ直して初めて反映される。
+
+### 毎回入れ直したくない場合
+
+Tampermonkey のスクリプトを1行だけにして、ビルド成果物を直接読ませる。
+
+```js
+// ==UserScript==
+// @name         ChatGPT → VOICEVOX Bridge (dev)
+// @match        https://chatgpt.com/*
+// @connect      127.0.0.1
+// @connect      localhost
+// @grant        GM_xmlhttpRequest
+// @require      file:///Users/<ユーザー名>/chatgpt-voicevox-bridge/dist/chatgpt-voicevox.user.js
+// ==/UserScript==
+```
+
+`chrome://extensions` の Tampermonkey で
+**「ファイルの URL へのアクセスを許可する」を ON** にすること。
+以後は `npm run build` してページをリロードするだけで反映される。
 
 ## トラブルシューティング
 
