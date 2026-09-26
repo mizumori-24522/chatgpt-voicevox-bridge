@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT → VOICEVOX Bridge
 // @namespace    local.chatgpt-voicevox-bridge
-// @version      0.2.1
+// @version      0.2.2
 // @author       mizumori-24522
 // @description  ChatGPT Web の回答を VOICEVOX で逐次読み上げする
 // @homepageURL  https://github.com/mizumori-24522/chatgpt-voicevox-bridge
@@ -34,6 +34,7 @@
     codeMode: "announce-once",
     tableMode: "announce",
     readSymbols: false,
+    readOnOpen: true,
     stopOnNewQuestion: true,
     engineOrigin: "http://127.0.0.1:50021",
     debug: false,
@@ -481,34 +482,100 @@
       });
     }
   }
+  const UNIT_SEL = "[data-content-search-unit-key]";
   const TURN_SEL = "[data-turn]";
   const TURN_FALLBACK_SEL = '[data-testid^="conversation-turn-"]';
   const ASSISTANT_SEL = '[data-message-author-role="assistant"]';
   const USER_SEL = '[data-message-author-role="user"]';
-  const CONTENT_SELECTORS = [".markdown", '[class*="markdown"]', ".prose", '[class*="prose"]'];
+  const CONTENT_SELECTORS = [
+    '[data-markdown-text-style="assistant-message"]',
+    ".markdown",
+    '[class*="markdown"]',
+    ".prose",
+    '[class*="prose"]'
+  ];
+  function unitRole(el) {
+    const key = el.getAttribute("data-content-search-unit-key") ?? "";
+    if (key.endsWith(":assistant")) return "assistant";
+    if (key.endsWith(":user")) return "user";
+    return null;
+  }
+  function textKey(el) {
+    return (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  }
   class ChatGptAdapter {
     getObserverRoot() {
       const main2 = document.querySelector("main");
       return main2 ?? document.body;
     }
-    /** assistant ターンを出現順に全部返す（任意の回答を指定して読ませる用） */
+    /** 新構造の発言単位。無ければ空配列 */
+    units(role) {
+      return Array.from(document.querySelectorAll(UNIT_SEL)).filter(
+        (u) => unitRole(u) === role
+      );
+    }
+    /** assistant の発言を出現順に全部返す（任意の回答を指定して読ませる用） */
     assistantTurns() {
-      return this.turns().filter(
+      const units = this.units("assistant");
+      if (units.length > 0) return units;
+      return this.legacyTurns().filter(
         (t) => t.getAttribute("data-turn") === "assistant" || t.getAttribute("data-turn") === null && t.querySelector(ASSISTANT_SEL) !== null
       );
     }
-    /** ターンから本文要素を取り出す */
+    /** 発言から本文要素を取り出す */
     contentOfTurn(turn) {
-      const message = turn.matches(ASSISTANT_SEL) ? turn : turn.querySelector(ASSISTANT_SEL) ?? turn;
-      return this.findContentRoot(message);
+      return this.findContentRoot(this.messageOf(turn, "assistant"));
     }
-    turns() {
+    getLatestAssistantMessage() {
+      const units = this.units("assistant");
+      if (units.length > 0) {
+        const unit = units[units.length - 1];
+        return {
+          id: this.unitMessageId(unit, units.length - 1),
+          element: unit,
+          content: this.findContentRoot(unit)
+        };
+      }
+      const turn = this.lastLegacyTurn("assistant");
+      if (!turn) return null;
+      const message = this.messageOf(turn, "assistant");
+      return { id: this.legacyTurnId(turn, message), element: message, content: this.findContentRoot(message) };
+    }
+    getLatestUserMessageId() {
+      const units = this.units("user");
+      if (units.length > 0) {
+        const text = textKey(units[units.length - 1]);
+        return text ? `user:${text}` : null;
+      }
+      const turn = this.lastLegacyTurn("user");
+      if (!turn) return null;
+      return this.legacyTurnId(turn, this.messageOf(turn, "user"));
+    }
+    /**
+     * 新構造の回答 ID。メッセージ ID を最優先する。
+     * ターンの鍵（unit-key）は fallback-turn-N → UUID と途中で変わるので使わない。
+     */
+    unitMessageId(unit, index) {
+      var _a;
+      const ids = (_a = unit.getAttribute("data-chatgpt-search-message-ids")) == null ? void 0 : _a.trim();
+      if (ids) return `msg:${ids.split(/\s+/)[0]}`;
+      const sel = unit.querySelector("[data-chatgpt-selection-message-id]");
+      const selId = sel == null ? void 0 : sel.getAttribute("data-chatgpt-selection-message-id");
+      if (selId) return `msg:${selId}`;
+      return `${location.pathname}:assistant-${index}`;
+    }
+    messageOf(turn, role) {
+      const sel = role === "assistant" ? ASSISTANT_SEL : USER_SEL;
+      return turn.matches(sel) ? turn : turn.querySelector(sel) ?? turn;
+    }
+    // ---- 旧構造 ----
+    legacyTurns() {
       const byTurn = document.querySelectorAll(TURN_SEL);
       if (byTurn.length > 0) return Array.from(byTurn);
       return Array.from(document.querySelectorAll(TURN_FALLBACK_SEL));
     }
-    lastTurnOfRole(role) {
-      const turns = this.turns();
+    lastLegacyTurn(role) {
+      const turns = this.legacyTurns();
       for (let i = turns.length - 1; i >= 0; i--) {
         const t = turns[i];
         const attr = t.getAttribute("data-turn");
@@ -519,33 +586,16 @@
       const nodes = document.querySelectorAll(sel);
       return nodes.length > 0 ? nodes[nodes.length - 1] : null;
     }
-    getLatestAssistantMessage() {
-      const turn = this.lastTurnOfRole("assistant");
-      if (!turn) return null;
-      const message = turn.matches(ASSISTANT_SEL) ? turn : turn.querySelector(ASSISTANT_SEL) ?? turn;
-      return { id: this.turnId(turn, message), element: message, content: this.findContentRoot(message) };
-    }
-    getLatestUserMessageId() {
-      const turn = this.lastTurnOfRole("user");
-      if (!turn) return null;
-      const message = turn.matches(USER_SEL) ? turn : turn.querySelector(USER_SEL) ?? turn;
-      return this.turnId(turn, message);
-    }
-    /**
-     * メッセージ ID。data-turn-id / data-message-id を優先し、
-     * 取れない場合のみ会話パス + 出現順で代用する。
-     */
-    turnId(turn, message) {
+    legacyTurnId(turn, message) {
       const turnId = turn.getAttribute("data-turn-id");
       if (turnId) return `turn:${turnId}`;
       const msgId = message.getAttribute("data-message-id");
       if (msgId) return `msg:${msgId}`;
       const testid = turn.getAttribute("data-testid");
       if (testid) return `${location.pathname}:${testid}`;
-      const siblings = this.turns();
-      return `${location.pathname}:idx-${siblings.indexOf(turn)}`;
+      return `${location.pathname}:idx-${this.legacyTurns().indexOf(turn)}`;
     }
-    /** 本文（markdown レンダリング結果）のルート。無ければメッセージ要素自身。 */
+    /** 本文（markdown レンダリング結果）のルート。無ければ要素自身。 */
     findContentRoot(el) {
       for (const sel of CONTENT_SELECTORS) {
         const hit = el.querySelector(sel);
@@ -565,7 +615,7 @@
       return false;
     }
     getComposer() {
-      return document.querySelector("#prompt-textarea") ?? document.querySelector('[data-composer-body] [contenteditable="true"]') ?? document.querySelector('form [contenteditable="true"]') ?? document.querySelector("form textarea");
+      return document.querySelector('[data-composer-body] [contenteditable="true"]') ?? document.querySelector("#prompt-textarea") ?? document.querySelector('form [contenteditable="true"]') ?? document.querySelector("form textarea");
     }
     /**
      * 質問の送信操作を検出する。「読み上げを解禁してよい」の一番確かな根拠。
@@ -605,7 +655,7 @@
       );
     }
     probe() {
-      const turns = this.turns().length;
+      const turns = document.querySelectorAll(UNIT_SEL).length + this.legacyTurns().length;
       const composer = this.getComposer() !== null;
       const ok = composer || turns > 0;
       const detail = `turns=${turns} composer=${composer}`;
@@ -868,6 +918,9 @@ ${el.textContent ?? ""}
   }
   const TICK_MS = 200;
   const SETTLE_MS = 1200;
+  const OPEN_STABLE_MS = 1e3;
+  const OPEN_GIVE_UP_MS = 15e3;
+  const OPEN_RENDER_GUARD_MS = 3e3;
   function conversationKey(pathname) {
     const m = pathname.match(/\/c\/([^/]+)/);
     return m ? m[1] : null;
@@ -886,10 +939,13 @@ ${el.textContent ?? ""}
       this.live = false;
       this.finished = false;
       this.conversationPath = location.pathname;
+      this.openPending = null;
+      this.openedAt = 0;
       this.chunker = new SpeechChunker(deps.getChunkerOptions());
     }
     /** 入力欄での送信操作を検出したときに呼ぶ */
     notifySubmitted() {
+      this.openPending = null;
       this.armed = true;
       this.live = false;
       log("Observer", "送信を検出");
@@ -898,6 +954,7 @@ ${el.textContent ?? ""}
     start() {
       const root = this.deps.adapter.getObserverRoot();
       this.lastUserMessageId = this.deps.adapter.getLatestUserMessageId();
+      if (conversationKey(location.pathname) !== null) this.beginOpen();
       this.mo = new MutationObserver(() => this.schedule());
       this.mo.observe(root, { childList: true, subtree: true, characterData: true });
       this.timer = window.setInterval(() => this.tick(), TICK_MS);
@@ -934,7 +991,11 @@ ${el.textContent ?? ""}
         if (prevKey !== null && prevKey !== conversationKey(location.pathname)) {
           this.armed = false;
           this.live = false;
+          this.beginOpen();
           log("Observer", "会話が切り替わった", location.pathname);
+        } else if (prevKey === null && !this.armed) {
+          this.beginOpen();
+          log("Observer", "会話を開いた", location.pathname);
         } else {
           log("Observer", "新規チャットの URL が確定", location.pathname);
         }
@@ -942,10 +1003,12 @@ ${el.textContent ?? ""}
       const userId = adapter.getLatestUserMessageId();
       if (userId !== null && userId !== this.lastUserMessageId) {
         const known = this.lastUserMessageId !== null;
+        const rendering = Date.now() - this.openedAt < OPEN_RENDER_GUARD_MS;
         this.lastUserMessageId = userId;
-        if (known) {
+        if (known && !rendering) {
           this.armed = true;
           this.live = false;
+          this.openPending = null;
           log("Observer", "new user message", userId);
           this.deps.onNewUserMessage();
         } else {
@@ -955,6 +1018,7 @@ ${el.textContent ?? ""}
       const generating = adapter.isGenerating();
       if (generating) this.armed = true;
       const latest = adapter.getLatestAssistantMessage();
+      this.checkOpenRead(latest, generating);
       if (!latest) return;
       if (latest.id !== this.currentMessageId) {
         const prevId = this.currentMessageId;
@@ -996,6 +1060,39 @@ ${el.textContent ?? ""}
         this.finished = true;
         log("Observer", "回答を読み切った", latest.id);
       }
+    }
+    beginOpen() {
+      const now = Date.now();
+      this.openedAt = now;
+      this.openPending = { since: now, candidateId: null, candidateSince: now };
+    }
+    /**
+     * チャットを開いた直後なら、表示が落ち着くのを待って最新の回答を頭から読む。
+     * 生成中の回答は通常の逐次読み上げに任せるので、ここでは扱わない。
+     */
+    checkOpenRead(latest, generating) {
+      const p = this.openPending;
+      if (!p) return;
+      const now = Date.now();
+      if (!this.deps.getReadOnOpen() || !this.deps.getEnabled() || generating || this.armed) {
+        this.openPending = null;
+        return;
+      }
+      if (now - p.since > OPEN_GIVE_UP_MS) {
+        this.openPending = null;
+        return;
+      }
+      if (!latest) return;
+      if (latest.id !== p.candidateId) {
+        p.candidateId = latest.id;
+        p.candidateSince = now;
+        return;
+      }
+      if (now - p.candidateSince < OPEN_STABLE_MS) return;
+      if (!this.extract(latest.content)) return;
+      this.openPending = null;
+      log("Observer", "チャットを開いたので最新の回答を読む", latest.id);
+      this.deps.onOpenChat(latest.content);
     }
     /** 差し替え後の本文が、今読んでいる本文の続きとみなせるか */
     isContinuation(text) {
@@ -1350,6 +1447,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
               </select></div>
             <label class="chk" title="ファイル名やパスの中の _ - . / を読み上げます">
               <input type="checkbox" id="readSymbols">記号を読む（_ - . /）</label>
+            <label class="chk"><input type="checkbox" id="readOnOpen">チャットを開いたら最新の回答を読む</label>
             <label class="chk"><input type="checkbox" id="stopOnNew">新しい質問で読み上げ停止</label>
             <label class="chk"><input type="checkbox" id="debug">デバッグログ</label>
             <div class="row">
@@ -1381,6 +1479,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
         stopOnNew: q("stopOnNew"),
         debug: q("debug"),
         readSymbols: q("readSymbols"),
+        readOnOpen: q("readOnOpen"),
         test: q("test"),
         reconnect: q("reconnect"),
         speakSel: q("speakSel")
@@ -1422,6 +1521,9 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
           this.cb.onChange({ [key]: e.target.value });
         });
       }
+      this.el.readOnOpen.addEventListener("change", (e) => {
+        this.cb.onChange({ readOnOpen: e.target.checked });
+      });
       this.el.readSymbols.addEventListener("change", (e) => {
         this.cb.onChange({ readSymbols: e.target.checked });
       });
@@ -1444,6 +1546,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       this.el.urlMode.value = s.urlMode;
       this.el.tableMode.value = s.tableMode;
       this.el.readSymbols.checked = s.readSymbols;
+      this.el.readOnOpen.checked = s.readOnOpen;
       this.el.stopOnNew.checked = s.stopOnNewQuestion;
       this.el.debug.checked = s.debug;
       this.el.toggle.textContent = s.enabled ? "🔊 ON" : "🔇 OFF";
@@ -1651,6 +1754,8 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
         if (!settings.enabled) return;
         queue.enqueue(text);
       },
+      getReadOnOpen: () => settings.readOnOpen,
+      onOpenChat: (content) => speakElement(content),
       onNewUserMessage: () => {
         if (settings.stopOnNewQuestion) stopSpeaking();
       }

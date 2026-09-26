@@ -12,6 +12,10 @@ export type ObserverDeps = {
   getChunkerOptions: () => ChunkerOptions;
   onChunk: (text: string) => void;
   onNewUserMessage: () => void;
+  /** 「チャットを開いたら最新の回答を読む」が ON か */
+  getReadOnOpen: () => boolean;
+  /** チャットを開いて表示が落ち着いたとき、最新の回答を頭から読ませる */
+  onOpenChat: (content: Element) => void;
 };
 
 const TICK_MS = 200;
@@ -21,6 +25,19 @@ const TICK_MS = 200;
  * 読み上げが尻切れにならないための保険。
  */
 const SETTLE_MS = 1200;
+/**
+ * チャットを開いてから、最新の回答が入れ替わらずにこの時間続いたら
+ * 「表示が落ち着いた」とみなして読み上げる。仮想化の描画途中で
+ * 古い回答を最新と取り違えないため。
+ */
+const OPEN_STABLE_MS = 1000;
+/** 開いてからこの時間内に回答が出てこなければ諦める（空のチャットなど） */
+const OPEN_GIVE_UP_MS = 15000;
+/**
+ * チャットを開いてからこの時間は、DOM に現れた質問を「送信された」とみなさない。
+ * 仮想化で過去の質問が順番に描画されるため。本当の送信は送信操作の検出で拾える。
+ */
+const OPEN_RENDER_GUARD_MS = 3000;
 
 /** URL から会話 ID を取り出す。新規チャット（/）など会話未確定なら null */
 export function conversationKey(pathname: string): string | null {
@@ -67,6 +84,14 @@ export class ChatObserver {
   private finished = false;
   /** lastUserMessageId をどの会話で記録したか。会話が変わったら基準を捨てる。 */
   private conversationPath = location.pathname;
+  /**
+   * チャットを開いた直後で、最新の回答を読むのを待っている状態。
+   * 開いたとき（ページ読み込み・別の会話への移動）に立て、
+   * 読み終えたか、質問を送ったか、時間切れで下ろす。
+   */
+  private openPending: { since: number; candidateId: string | null; candidateSince: number } | null = null;
+  /** 最後にチャットを開いた時刻 */
+  private openedAt = 0;
 
   constructor(private deps: ObserverDeps) {
     this.chunker = new SpeechChunker(deps.getChunkerOptions());
@@ -74,6 +99,7 @@ export class ChatObserver {
 
   /** 入力欄での送信操作を検出したときに呼ぶ */
   notifySubmitted(): void {
+    this.openPending = null;
     this.armed = true;
     this.live = false;
     log('Observer', '送信を検出');
@@ -83,6 +109,7 @@ export class ChatObserver {
   start(): void {
     const root = this.deps.adapter.getObserverRoot();
     this.lastUserMessageId = this.deps.adapter.getLatestUserMessageId();
+    if (conversationKey(location.pathname) !== null) this.beginOpen();
 
     this.mo = new MutationObserver(() => this.schedule());
     this.mo.observe(root, { childList: true, subtree: true, characterData: true });
@@ -129,7 +156,12 @@ export class ChatObserver {
         // 本当に別の会話へ移った。送信直後でも、移動先の回答は読まない。
         this.armed = false;
         this.live = false;
+        this.beginOpen();
         log('Observer', '会話が切り替わった', location.pathname);
+      } else if (prevKey === null && !this.armed) {
+        // 新規チャット画面から、送信せずにサイドバーで既存の会話を開いた
+        this.beginOpen();
+        log('Observer', '会話を開いた', location.pathname);
       } else {
         // 新規チャットで送信した直後に URL が確定しただけ。解禁は維持する。
         log('Observer', '新規チャットの URL が確定', location.pathname);
@@ -140,11 +172,13 @@ export class ChatObserver {
     const userId = adapter.getLatestUserMessageId();
     if (userId !== null && userId !== this.lastUserMessageId) {
       const known = this.lastUserMessageId !== null;
+      const rendering = Date.now() - this.openedAt < OPEN_RENDER_GUARD_MS;
       this.lastUserMessageId = userId;
-      if (known) {
+      if (known && !rendering) {
         // 同じ会話の中で質問が増えた = 本当に送られた
         this.armed = true;
         this.live = false;
+        this.openPending = null;
         log('Observer', 'new user message', userId);
         this.deps.onNewUserMessage();
       } else {
@@ -156,6 +190,7 @@ export class ChatObserver {
     const generating = adapter.isGenerating();
     if (generating) this.armed = true;
     const latest = adapter.getLatestAssistantMessage();
+    this.checkOpenRead(latest, generating);
     if (!latest) return;
 
     if (latest.id !== this.currentMessageId) {
@@ -211,6 +246,42 @@ export class ChatObserver {
       this.finished = true;
       log('Observer', '回答を読み切った', latest.id);
     }
+  }
+
+  private beginOpen(): void {
+    const now = Date.now();
+    this.openedAt = now;
+    this.openPending = { since: now, candidateId: null, candidateSince: now };
+  }
+
+  /**
+   * チャットを開いた直後なら、表示が落ち着くのを待って最新の回答を頭から読む。
+   * 生成中の回答は通常の逐次読み上げに任せるので、ここでは扱わない。
+   */
+  private checkOpenRead(latest: { id: string; content: Element } | null, generating: boolean): void {
+    const p = this.openPending;
+    if (!p) return;
+    const now = Date.now();
+    if (!this.deps.getReadOnOpen() || !this.deps.getEnabled() || generating || this.armed) {
+      this.openPending = null;
+      return;
+    }
+    if (now - p.since > OPEN_GIVE_UP_MS) {
+      this.openPending = null;
+      return;
+    }
+    if (!latest) return;
+    if (latest.id !== p.candidateId) {
+      p.candidateId = latest.id;
+      p.candidateSince = now;
+      return;
+    }
+    if (now - p.candidateSince < OPEN_STABLE_MS) return;
+    if (!this.extract(latest.content)) return;
+
+    this.openPending = null;
+    log('Observer', 'チャットを開いたので最新の回答を読む', latest.id);
+    this.deps.onOpenChat(latest.content);
   }
 
   /** 差し替え後の本文が、今読んでいる本文の続きとみなせるか */

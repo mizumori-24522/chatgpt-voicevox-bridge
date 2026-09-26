@@ -138,6 +138,7 @@ export class UiPanel {
               </select></div>
             <label class="chk" title="ファイル名やパスの中の _ - . / を読み上げます">
               <input type="checkbox" id="readSymbols">記号を読む（_ - . /）</label>
+            <label class="chk"><input type="checkbox" id="readOnOpen">チャットを開いたら最新の回答を読む</label>
             <label class="chk"><input type="checkbox" id="stopOnNew">新しい質問で読み上げ停止</label>
             <label class="chk"><input type="checkbox" id="debug">デバッグログ</label>
             <div class="row">
@@ -158,7 +159,7 @@ export class UiPanel {
       toggle: q('toggle'), stop: q('stop'),
       status: q('status'), codeMode: q('codeMode'), urlMode: q('urlMode'),
       tableMode: q('tableMode'), stopOnNew: q('stopOnNew'), debug: q('debug'),
-      readSymbols: q('readSymbols'),
+      readSymbols: q('readSymbols'), readOnOpen: q('readOnOpen'),
       test: q('test'), reconnect: q('reconnect'), speakSel: q('speakSel'),
     };
 
@@ -206,6 +207,9 @@ export class UiPanel {
         this.cb.onChange({ [key]: (e.target as HTMLSelectElement).value } as Partial<Settings>);
       });
     }
+    this.el.readOnOpen.addEventListener('change', (e) => {
+      this.cb.onChange({ readOnOpen: (e.target as HTMLInputElement).checked });
+    });
     this.el.readSymbols.addEventListener('change', (e) => {
       this.cb.onChange({ readSymbols: (e.target as HTMLInputElement).checked });
     });
@@ -229,6 +233,7 @@ export class UiPanel {
     (this.el.urlMode as HTMLSelectElement).value = s.urlMode;
     (this.el.tableMode as HTMLSelectElement).value = s.tableMode;
     (this.el.readSymbols as HTMLInputElement).checked = s.readSymbols;
+    (this.el.readOnOpen as HTMLInputElement).checked = s.readOnOpen;
     (this.el.stopOnNew as HTMLInputElement).checked = s.stopOnNewQuestion;
     (this.el.debug as HTMLInputElement).checked = s.debug;
     this.el.toggle.textContent = s.enabled ? '🔊 ON' : '🔇 OFF';

@@ -104,6 +104,8 @@ function main(): void {
       if (!settings.enabled) return;
       queue.enqueue(text);
     },
+    getReadOnOpen: () => settings.readOnOpen,
+    onOpenChat: (content) => speakElement(content),
     onNewUserMessage: () => {
       if (settings.stopOnNewQuestion) stopSpeaking();
     },

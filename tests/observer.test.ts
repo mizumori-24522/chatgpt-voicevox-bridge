@@ -72,8 +72,9 @@ class FakeChat2 {
   }
 }
 
-function makeObserver() {
+function makeObserver(readOnOpen = false) {
   const chunks: string[] = [];
+  const opened: string[] = [];
   let stops = 0;
   const observer = new ChatObserver({
     adapter: new ChatGptAdapter(),
@@ -86,8 +87,10 @@ function makeObserver() {
     }),
     onChunk: (t) => chunks.push(t),
     onNewUserMessage: () => stops++,
+    getReadOnOpen: () => readOnOpen,
+    onOpenChat: (content) => opened.push((content.textContent ?? '').trim()),
   });
-  return { observer, chunks, getStops: () => stops };
+  return { observer, chunks, opened, getStops: () => stops };
 }
 
 /** MutationObserver/rAF を待たず、内部ポーリング相当を直接叩く */
@@ -606,5 +609,222 @@ describe('ChatGptAdapter.onSubmit', () => {
     new ChatGptAdapter().onSubmit(cb);
     other.dispatchEvent(enter());
     expect(cb).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 2026-09-26 に実機で確認した新しい ChatGPT の構造。
+ * data-turn / data-message-author-role が無くなり、
+ * data-content-search-unit-key と data-markdown-text-style に置き換わった。
+ */
+describe('新しい ChatGPT の DOM 構造', () => {
+  function newTurn(turnKey: string, userText: string, answerId: string | null) {
+    const main = document.getElementById('main')!;
+    main.insertAdjacentHTML(
+      'beforeend',
+      `<div data-content-search-turn-key="${turnKey}">
+         <div data-content-search-unit-key="${turnKey}:0:user"><p>${userText}</p></div>
+         <div data-content-search-unit-key="${turnKey}:2:assistant"
+              ${answerId ? `data-chatgpt-search-message-ids="${answerId} ${answerId}"` : ''}>
+           <h6 class="sr-only">ChatGPT の発言:</h6>
+           <div ${answerId ? `data-chatgpt-selection-message-id="${answerId}"` : ''}>
+             <div data-markdown-text-style="assistant-message"></div>
+           </div>
+         </div>
+       </div>`,
+    );
+    const turn = main.querySelector(`[data-content-search-turn-key="${turnKey}"]`) as HTMLElement;
+    return {
+      turn,
+      body: turn.querySelector('[data-markdown-text-style="assistant-message"]') as HTMLElement,
+    };
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '<main id="main"></main>';
+  });
+
+  it('finds the latest answer, its id and its body', () => {
+    const a = new ChatGptAdapter();
+    const { body } = newTurn('t1', '質問', 'ans-1');
+    body.innerHTML = '<p>本文です。</p>';
+    const latest = a.getLatestAssistantMessage()!;
+    expect(latest.id).toBe('msg:ans-1');
+    expect(latest.content).toBe(body);
+    expect(a.getLatestUserMessageId()).toBe('user:質問');
+  });
+
+  it('does not read the hidden "ChatGPT の発言:" heading', () => {
+    const a = new ChatGptAdapter();
+    const { body } = newTurn('t1', '質問', 'ans-1');
+    body.innerHTML = '<p>本文です。</p>';
+    expect(a.getLatestAssistantMessage()!.content.textContent).not.toContain('ChatGPT の発言');
+  });
+
+  it('keeps the same answer id when the turn key changes from fallback to a UUID', () => {
+    const a = new ChatGptAdapter();
+    const { turn } = newTurn('fallback-turn-0', '質問', 'ans-1');
+    const before = a.getLatestAssistantMessage()!.id;
+    turn.setAttribute('data-content-search-turn-key', 'real-uuid');
+    turn.querySelector('[data-content-search-unit-key$=":assistant"]')!
+      .setAttribute('data-content-search-unit-key', 'real-uuid:2:assistant');
+    expect(a.getLatestAssistantMessage()!.id).toBe(before);
+  });
+
+  it('reads a new answer after sending (end to end with the observer)', () => {
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    const { body } = newTurn('fallback-turn-0', '日本の四季について', 'ans-new');
+    body.innerHTML = '<p>春は桜が咲き誇ります。</p>';
+    pump();
+    body.innerHTML = '<p>春は桜が咲き誇ります。夏は強い日差しと蝉の声が特徴です。</p>';
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('夏は強い日差しと蝉の声が特徴です。');
+    observer.stop();
+  });
+
+  it('does not read answers that are already there when a chat is opened', () => {
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+    const { body } = newTurn('uuid-old', '前の質問', 'ans-old');
+    body.innerHTML = '<p>前からある回答です。読んではいけません。</p>';
+    pump();
+    settle();
+    expect(chunks).toEqual([]);
+    observer.stop();
+  });
+
+  it('starts reading even if the message id only appears after streaming starts', () => {
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    const { body } = newTurn('fallback-turn-0', '質問', null);
+    body.innerHTML = '<p>最初はIDがありません。</p>';
+    pump();
+    const unit = document.querySelector('[data-content-search-unit-key$=":assistant"]')!;
+    unit.setAttribute('data-chatgpt-search-message-ids', 'late-id');
+    body.innerHTML = '<p>最初はIDがありません。あとからIDが付きます。</p>';
+    pump();
+    settle();
+
+    const all = chunks.join(' ');
+    expect(all).toContain('あとからIDが付きます。');
+    expect(all.match(/最初はIDがありません。/g)?.length).toBe(1);
+    observer.stop();
+  });
+
+  it('adds a read button to every answer', () => {
+    const a = new ChatGptAdapter();
+    newTurn('t1', 'q1', 'a1');
+    newTurn('t2', 'q2', 'a2');
+    expect(a.assistantTurns()).toHaveLength(2);
+  });
+});
+
+describe('チャットを開いたら最新の回答を読む', () => {
+  function turn(key: string, answerId: string, text: string) {
+    document.getElementById('main')!.insertAdjacentHTML(
+      'beforeend',
+      `<div data-content-search-turn-key="${key}">
+         <div data-content-search-unit-key="${key}:0:user"><p>質問 ${key}</p></div>
+         <div data-content-search-unit-key="${key}:2:assistant" data-chatgpt-search-message-ids="${answerId}">
+           <div data-markdown-text-style="assistant-message"><p>${text}</p></div>
+         </div>
+       </div>`,
+    );
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '<main id="main"></main>';
+    history.pushState({}, '', '/c/chat-a');
+  });
+
+  it('reads the latest answer once the page settles', () => {
+    turn('t1', 'a1', '古いほうの回答です。');
+    turn('t2', 'a2', '最新の回答です。');
+    const { observer, opened, chunks } = makeObserver(true);
+    observer.start();
+    pump();
+    settle();
+    pump();
+    expect(opened).toEqual(['最新の回答です。']);
+    // 逐次読み上げ側では二重に読まない
+    expect(chunks).toEqual([]);
+    observer.stop();
+  });
+
+  it('waits for virtualized rendering instead of reading an older answer first', () => {
+    const { observer, opened } = makeObserver(true);
+    observer.start();
+    turn('t1', 'a1', '先に描画された古い回答です。');
+    pump();
+    // 1 秒経たないうちに、本当の最新が描画される
+    turn('t2', 'a2', '本当の最新の回答です。');
+    pump();
+    settle();
+    pump();
+    expect(opened).toEqual(['本当の最新の回答です。']);
+    observer.stop();
+  });
+
+  it('reads again when switching to another chat', () => {
+    turn('t1', 'a1', 'Aの回答です。');
+    const { observer, opened } = makeObserver(true);
+    observer.start();
+    pump();
+    settle();
+    pump();
+
+    history.pushState({}, '', '/c/chat-b');
+    document.getElementById('main')!.innerHTML = '';
+    turn('u1', 'b1', 'Bの回答です。');
+    pump();
+    settle();
+    pump();
+    expect(opened).toEqual(['Aの回答です。', 'Bの回答です。']);
+    observer.stop();
+  });
+
+  it('does nothing when the setting is off', () => {
+    turn('t1', 'a1', '読まない回答です。');
+    const { observer, opened, chunks } = makeObserver(false);
+    observer.start();
+    pump();
+    settle();
+    pump();
+    expect(opened).toEqual([]);
+    expect(chunks).toEqual([]);
+    observer.stop();
+  });
+
+  it('gives way to a question sent right after opening', () => {
+    turn('t1', 'a1', '開いた直後の回答です。');
+    const { observer, opened } = makeObserver(true);
+    observer.start();
+    pump();
+    observer.notifySubmitted();
+    settle();
+    pump();
+    expect(opened).toEqual([]);
+    observer.stop();
+  });
+
+  it('does not read on the new-chat screen', () => {
+    history.pushState({}, '', '/');
+    const { observer, opened } = makeObserver(true);
+    observer.start();
+    pump();
+    settle();
+    pump();
+    expect(opened).toEqual([]);
+    observer.stop();
   });
 });

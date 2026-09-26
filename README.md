@@ -64,6 +64,7 @@ OpenAI API は使いません。音声入力（Aqua Voice 等）は OS 側の機
 | コード | 読まない / 最初の1回だけ伝える（既定）/ 毎回伝える / 読む |
 | URL / 表 | 読まない・あることだけ伝える・読む |
 | 記号を読む（_ - . /） | ファイル名やパスの中の記号を読み上げる。既定 OFF |
+| チャットを開いたら最新の回答を読む | 既定 ON。開いて表示が落ち着いたら、そのチャットの最新の回答を頭から読む |
 | 新しい質問で読み上げ停止 | 既定 ON |
 | テスト発声 / 再接続 | 動作確認用 |
 
@@ -98,6 +99,23 @@ VOICEVOX 本体の **「読み方＆アクセント辞書」** がそのまま�
 | `voice-picker.ts` | キャラクター → スタイルの2段メニュー |
 | `icon-cache.ts` | 顔アイコンを必要な分だけ取り、同じものは二度取らない |
 | `message-actions.ts` | 各回答へ「この回答を読む」ボタンを差し込む |
+
+### 実測した ChatGPT の DOM (2026-09-26)
+
+2026-09 下旬に構造が丸ごと変わり、旧来の `data-turn` / `data-message-author-role` が消えた。
+
+```html
+<div data-content-search-turn-key="fallback-turn-0">   ← 後で UUID に差し替わる
+  <div data-content-search-unit-key="fallback-turn-0:0:user">…質問…</div>
+  <div data-content-search-unit-key="fallback-turn-0:2:assistant"
+       data-chatgpt-search-message-ids="<回答ID>">
+    <div data-markdown-text-style="assistant-message">  ← 本文
+```
+
+- 回答の同一性は `data-chatgpt-search-message-ids`（ターンの鍵は途中で変わるので使わない）
+- 質問にはメッセージ ID が無いので、本文で同一性を見る
+- 入力欄は `[data-composer-body] [contenteditable]`、送信ボタンは `aria-label="送信"`
+- アダプタは旧構造にもフォールバックする
 
 ### 実測した ChatGPT の DOM (2026-09-15 / GPT-6 世代 UI)
 
@@ -206,6 +224,8 @@ Tampermonkey へ入れ直して初めて反映される。
 ### 毎回入れ直したくない場合
 
 Tampermonkey のスクリプトを殻だけにして、手元のビルド成果物を直接読ませる。
+**Tampermonkey は `@require` をキャッシュする**ので、設定（設定モード「上級者」）→「外部」→
+「更新間隔」を「常に」にしておくこと。これが無いとリロードしても古いコードのまま動く。
 （このファイルは各自の Mac のパスを含むので、リポジトリには入れていない）
 
 ```js

@@ -18,6 +18,8 @@ export type Settings = {
   codeMode: CodeMode;
   tableMode: 'skip' | 'announce' | 'read';
   readSymbols: boolean;
+  /** チャットを開いたら、そのチャットの最新の回答を読む */
+  readOnOpen: boolean;
   stopOnNewQuestion: boolean;
   engineOrigin: string;
   debug: boolean;
@@ -41,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   codeMode: 'announce-once',
   tableMode: 'announce',
   readSymbols: false,
+  readOnOpen: true,
   stopOnNewQuestion: true,
   engineOrigin: 'http://127.0.0.1:50021',
   debug: false,
