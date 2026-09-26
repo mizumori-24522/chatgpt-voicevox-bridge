@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT → VOICEVOX Bridge
 // @namespace    local.chatgpt-voicevox-bridge
-// @version      0.2.0
+// @version      0.2.1
 // @author       mizumori-24522
 // @description  ChatGPT Web の回答を VOICEVOX で逐次読み上げする
 // @homepageURL  https://github.com/mizumori-24522/chatgpt-voicevox-bridge
@@ -644,6 +644,10 @@
       this.consumed = fullText.length;
       return "";
     }
+    /** 直近に観測した本文全体 */
+    get text() {
+      return this.lastText;
+    }
     get consumedLength() {
       return this.consumed;
     }
@@ -864,6 +868,10 @@ ${el.textContent ?? ""}
   }
   const TICK_MS = 200;
   const SETTLE_MS = 1200;
+  function conversationKey(pathname) {
+    const m = pathname.match(/\/c\/([^/]+)/);
+    return m ? m[1] : null;
+  }
   class ChatObserver {
     constructor(deps) {
       this.deps = deps;
@@ -875,12 +883,15 @@ ${el.textContent ?? ""}
       this.lastUserMessageId = null;
       this.lastDeltaAt = 0;
       this.armed = false;
+      this.live = false;
+      this.finished = false;
       this.conversationPath = location.pathname;
       this.chunker = new SpeechChunker(deps.getChunkerOptions());
     }
     /** 入力欄での送信操作を検出したときに呼ぶ */
     notifySubmitted() {
       this.armed = true;
+      this.live = false;
       log("Observer", "送信を検出");
       this.deps.onNewUserMessage();
     }
@@ -917,9 +928,16 @@ ${el.textContent ?? ""}
     tick() {
       const adapter = this.deps.adapter;
       if (location.pathname !== this.conversationPath) {
+        const prevKey = conversationKey(this.conversationPath);
         this.conversationPath = location.pathname;
         this.lastUserMessageId = null;
-        log("Observer", "会話が切り替わった", location.pathname);
+        if (prevKey !== null && prevKey !== conversationKey(location.pathname)) {
+          this.armed = false;
+          this.live = false;
+          log("Observer", "会話が切り替わった", location.pathname);
+        } else {
+          log("Observer", "新規チャットの URL が確定", location.pathname);
+        }
       }
       const userId = adapter.getLatestUserMessageId();
       if (userId !== null && userId !== this.lastUserMessageId) {
@@ -927,6 +945,7 @@ ${el.textContent ?? ""}
         this.lastUserMessageId = userId;
         if (known) {
           this.armed = true;
+          this.live = false;
           log("Observer", "new user message", userId);
           this.deps.onNewUserMessage();
         } else {
@@ -938,35 +957,66 @@ ${el.textContent ?? ""}
       const latest = adapter.getLatestAssistantMessage();
       if (!latest) return;
       if (latest.id !== this.currentMessageId) {
+        const prevId = this.currentMessageId;
         this.currentMessageId = latest.id;
-        this.tracker.reset();
-        this.chunker.clear();
-        this.lastDeltaAt = Date.now();
-        if (!this.armed) {
-          this.tracker.push(this.extract(latest.content));
-          log("Observer", "既存の回答として無言で取り込み", latest.id);
-          return;
+        if (this.live && this.isContinuation(this.extract(latest.content))) {
+          log("Observer", "回答の ID が差し替わった（続きから読む）", prevId, "→", latest.id);
+        } else {
+          this.beginMessage(latest);
+          if (!this.live) return;
         }
-        log("Observer", "new assistant message", latest.id);
-        this.armed = false;
       }
       if (!this.deps.getEnabled()) {
         this.tracker.push(this.extract(latest.content));
         this.chunker.clear();
         return;
       }
+      const text = this.extract(latest.content);
+      if (text === "" && this.tracker.consumedLength > 0) return;
+      const delta = this.tracker.push(text);
+      if (!this.live) {
+        if (!delta || this.finished) return;
+        this.live = true;
+        log("Observer", "取り込み済みの回答が伸びたので読み始める", latest.id);
+      }
       this.chunker.setOptions(this.deps.getChunkerOptions());
-      const delta = this.tracker.push(this.extract(latest.content));
       if (delta) {
         this.chunker.append(delta);
         this.lastDeltaAt = Date.now();
       }
       const settled = Date.now() - this.lastDeltaAt >= SETTLE_MS;
-      const chunks = this.chunker.take(!generating && settled);
+      const done = !generating && settled;
+      const chunks = this.chunker.take(done);
       for (const c of chunks) {
         log("Chunker", "chunk", c);
         this.deps.onChunk(c);
       }
+      if (done && this.tracker.consumedLength > 0) {
+        this.live = false;
+        this.finished = true;
+        log("Observer", "回答を読み切った", latest.id);
+      }
+    }
+    /** 差し替え後の本文が、今読んでいる本文の続きとみなせるか */
+    isContinuation(text) {
+      const tracked = this.tracker.text;
+      return text === "" || text.startsWith(tracked) || tracked.startsWith(text);
+    }
+    /** 別の回答に切り替わった。解禁されていれば読み始め、そうでなければ黙って取り込む。 */
+    beginMessage(latest) {
+      this.finished = false;
+      this.tracker.reset();
+      this.chunker.clear();
+      this.lastDeltaAt = Date.now();
+      if (!this.armed) {
+        this.live = false;
+        this.tracker.push(this.extract(latest.content));
+        log("Observer", "既存の回答として無言で取り込み", latest.id);
+        return;
+      }
+      log("Observer", "new assistant message", latest.id);
+      this.armed = false;
+      this.live = true;
     }
   }
   const PICKER_CSS = `

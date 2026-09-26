@@ -422,6 +422,139 @@ describe('ChatObserver', () => {
   });
 });
 
+describe('ChatObserver: 回答ターンの ID 差し替え', () => {
+  /** 回答ターンの ID を付け替える（仮の枠 → 本物の ID に置き換わる挙動） */
+  function swapAssistantId(from: string, to: string): HTMLElement {
+    const msg = document.querySelector(`[data-message-id="${from}"]`)!;
+    const turn = msg.closest('section')!;
+    turn.setAttribute('data-turn-id', `t-${to}`);
+    msg.setAttribute('data-message-id', to);
+    return msg.querySelector('.markdown') as HTMLElement;
+  }
+
+  it('keeps reading when the answer turn changes its id mid-stream', () => {
+    const chat = new FakeChat();
+    chat.addUser('前の質問');
+    chat.addAssistant('prev').innerHTML = '<p>前の回答です。これは読まない。</p>';
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+    settle();
+
+    observer.notifySubmitted();
+    chat.addUser('次の質問');
+    pump();
+    const c = chat.addAssistant('placeholder');
+    c.innerHTML = '<p>一文目の回答です。</p>';
+    pump();
+    const c2 = swapAssistantId('placeholder', 'real');
+    c2.innerHTML = '<p>一文目の回答です。二文目もちゃんと読みます。</p>';
+    pump();
+    settle();
+
+    const all = chunks.join(' ');
+    expect(all).toContain('一文目の回答です。');
+    expect(all).toContain('二文目もちゃんと読みます。');
+    // 差し替えで頭から読み直さない
+    expect(all.split('一文目の回答です。').length - 1).toBe(1);
+    expect(all).not.toContain('これは読まない');
+    observer.stop();
+  });
+
+  it('keeps reading in a brand-new chat when the URL is confirmed and the turn is re-mounted', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    chat.addUser('はじめての質問');
+    pump();
+    const c = chat.addAssistant('tmp');
+    c.innerHTML = '<p>最初の文です。</p>';
+    pump();
+
+    // URL が /c/... に確定し、会話が本物の ID で描き直される
+    history.pushState({}, '', '/c/confirmed');
+    document.getElementById('main')!.innerHTML = '';
+    chat.addUser('はじめての質問');
+    chat.addAssistant('server').innerHTML = '<p>最初の文です。続きの文も読みます。</p>';
+    pump();
+    settle();
+
+    const all = chunks.join(' ');
+    expect(all).toContain('続きの文も読みます。');
+    expect(all.split('最初の文です。').length - 1).toBe(1);
+    observer.stop();
+    history.pushState({}, '', '/');
+  });
+
+  it('still reads when the answer text starts after a long thinking pause', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    chat.addUser('考える質問');
+    pump();
+    const c = chat.addAssistant('think');
+    pump();
+    // 本文が出るまで数秒かかる（思考中）
+    vi.advanceTimersByTime(5000);
+    swapAssistantId('think', 'answer').innerHTML = '<p>考えた末の回答です。</p>';
+    void c;
+    pump();
+    settle();
+
+    expect(chunks.join(' ')).toContain('考えた末の回答です。');
+    observer.stop();
+  });
+
+  it('does not re-read from the top after a momentary empty render', () => {
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    chat.addUser('質問');
+    pump();
+    const c = chat.addAssistant('flicker');
+    c.innerHTML = '<p>ちらつく前の文です。</p>';
+    pump();
+    c.innerHTML = '';
+    pump();
+    c.innerHTML = '<p>ちらつく前の文です。その後の文です。</p>';
+    pump();
+    settle();
+
+    const all = chunks.join(' ');
+    expect(all.split('ちらつく前の文です。').length - 1).toBe(1);
+    expect(all).toContain('その後の文です。');
+    observer.stop();
+  });
+
+  it('does not read another chat opened right after submitting', () => {
+    history.pushState({}, '', '/c/current');
+    const chat = new FakeChat();
+    const { observer, chunks } = makeObserver();
+    observer.start();
+    pump();
+
+    observer.notifySubmitted();
+    history.pushState({}, '', '/c/somewhere-else');
+    chat.addUser('よその質問');
+    chat.addAssistant('elsewhere').innerHTML = '<p>よその会話の前からある回答です。</p>';
+    pump();
+    settle();
+
+    expect(chunks).toEqual([]);
+    observer.stop();
+    history.pushState({}, '', '/');
+  });
+});
+
 describe('ChatGptAdapter.onSubmit', () => {
   function composer(text: string) {
     document.body.innerHTML = `<form><div id="prompt-textarea" contenteditable="true">${text}</div>

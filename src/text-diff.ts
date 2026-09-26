@@ -42,6 +42,11 @@ export class StreamTracker {
     return '';
   }
 
+  /** 直近に観測した本文全体 */
+  get text(): string {
+    return this.lastText;
+  }
+
   get consumedLength(): number {
     return this.consumed;
   }
