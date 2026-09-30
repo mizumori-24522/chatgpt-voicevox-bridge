@@ -18,7 +18,12 @@ export type PickerDeps = {
   onSelect: (option: StyleOption) => void;
   /** お気に入りの付け外し。引数は変更後のお気に入り（キャラの UUID）一覧 */
   onFavoritesChange: (favorites: string[]) => void;
+  /** 区分の開け閉め。引数は変更後の「畳んでいる区分」一覧 */
+  onCollapsedChange: (collapsed: PickerGroup[]) => void;
 };
+
+/** 左の列の区分 */
+export type PickerGroup = 'recent' | 'favorites' | 'all';
 
 /** 「最近使った」に並べる数 */
 export const RECENT_LIMIT = 5;
@@ -44,7 +49,9 @@ export const PICKER_CSS = `
   background: rgba(127,127,127,.15); }
 
 .picker { position: fixed; right: 284px; bottom: 16px; z-index: 2147483001;
-  width: min(460px, calc(100vw - 300px)); height: min(480px, calc(100vh - 32px));
+  width: min(460px, calc(100vw - 300px));
+  /* 区分を畳んだときは中身に合わせて縮む。広がるのは最大 480px まで */
+  max-height: min(480px, calc(100vh - 32px));
   display: flex; flex-direction: column; overflow: hidden;
   background: #fff; color: #1b1b1b; border: 1px solid #d5d5d5; border-radius: 12px;
   box-shadow: 0 10px 32px rgba(0,0,0,.22); }
@@ -55,7 +62,7 @@ export const PICKER_CSS = `
 .picker-head { padding: 8px; border-bottom: 1px solid rgba(128,128,128,.25); }
 .search { width: 100%; box-sizing: border-box; font: inherit; padding: 5px 8px;
   border: 1px solid #ccc; border-radius: 8px; }
-.cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.cols { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; }
 .col { overflow-y: auto; padding: 4px; }
 .col + .col { border-left: 1px solid rgba(128,128,128,.25); }
 .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 6px;
@@ -66,8 +73,14 @@ export const PICKER_CSS = `
 .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .count, .item .check { flex: none; font-size: 11px; opacity: .6; }
 .empty { padding: 12px; font-size: 12px; opacity: .6; }
-.group { padding: 8px 6px 3px; font-size: 11px; font-weight: 600; opacity: .55; letter-spacing: .02em; }
+.group { display: flex; align-items: center; gap: 4px; width: 100%; padding: 8px 6px 3px;
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-align: left;
+  color: inherit; opacity: .55; border: 0; background: transparent; cursor: pointer; }
+.group:hover { opacity: .9; }
 .group:first-child { padding-top: 2px; }
+.group .arrow { display: inline-block; width: 10px; transition: transform .12s ease; }
+.group.collapsed .arrow { transform: rotate(-90deg); }
+.group .n { font-weight: 400; opacity: .8; }
 .item .sub { flex: none; max-width: 45%; font-size: 11px; opacity: .6;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .star { flex: none; width: 18px; text-align: center; font-size: 13px; line-height: 1;
@@ -96,6 +109,7 @@ export class VoicePicker {
   private activeChar: string | null = null;
   private recent: number[] = [];
   private favorites: string[] = [];
+  private collapsed: PickerGroup[] = [];
 
   constructor(private deps: PickerDeps) {
     this.trigger = document.createElement('button');
@@ -159,10 +173,11 @@ export class VoicePicker {
     this.setSelected(selectedId);
   }
 
-  /** 「最近使った」（スタイル ID）と「お気に入り」（キャラの UUID）を渡す */
-  setPrefs(recent: number[], favorites: string[]): void {
+  /** 「最近使った」（スタイル ID）・「お気に入り」（キャラの UUID）・畳んでいる区分を渡す */
+  setPrefs(recent: number[], favorites: string[], collapsed: PickerGroup[] = []): void {
     this.recent = recent;
     this.favorites = favorites;
+    this.collapsed = collapsed;
     if (!this.panel.hidden) this.renderCharacters();
   }
 
@@ -244,22 +259,26 @@ export class VoicePicker {
     } else {
       const recent = this.recentOptions();
       if (recent.length > 0) {
-        this.charCol.appendChild(this.groupTitle('最近使った'));
-        for (const o of recent) this.charCol.appendChild(this.recentRow(o));
+        this.charCol.appendChild(this.groupTitle('recent', '最近使った', recent.length));
+        if (!this.isCollapsed('recent')) {
+          for (const o of recent) this.charCol.appendChild(this.recentRow(o));
+        }
       }
 
       const favs = this.favorites
         .map((uuid) => this.characters.find((c) => c.uuid === uuid))
         .filter((c): c is Character => c !== undefined);
       if (favs.length > 0) {
-        this.charCol.appendChild(this.groupTitle('★ お気に入り'));
-        for (const c of favs) this.charCol.appendChild(this.characterRow(c, q));
+        this.charCol.appendChild(this.groupTitle('favorites', '★ お気に入り', favs.length));
+        if (!this.isCollapsed('favorites')) {
+          for (const c of favs) this.charCol.appendChild(this.characterRow(c, q));
+        }
       }
 
-      this.charCol.appendChild(this.groupTitle('すべてのキャラ'));
-      for (const c of this.characters) {
-        if (this.favorites.includes(c.uuid)) continue;
-        this.charCol.appendChild(this.characterRow(c, q));
+      const rest = this.characters.filter((c) => !this.favorites.includes(c.uuid));
+      this.charCol.appendChild(this.groupTitle('all', 'すべてのキャラ', rest.length));
+      if (!this.isCollapsed('all')) {
+        for (const c of rest) this.charCol.appendChild(this.characterRow(c, q));
       }
     }
 
@@ -267,11 +286,35 @@ export class VoicePicker {
     this.renderStyles(active, q);
   }
 
-  private groupTitle(text: string): HTMLDivElement {
-    const el = document.createElement('div');
+  private isCollapsed(group: PickerGroup): boolean {
+    return this.collapsed.includes(group);
+  }
+
+  /** 区分の見出し。押すとその区分を畳む／開く */
+  private groupTitle(group: PickerGroup, text: string, count: number): HTMLButtonElement {
+    const el = document.createElement('button');
+    el.type = 'button';
     el.className = 'group';
-    el.textContent = text;
+    el.dataset.group = group;
+    const collapsed = this.isCollapsed(group);
+    el.classList.toggle('collapsed', collapsed);
+    el.setAttribute('aria-expanded', String(!collapsed));
+    el.innerHTML = `<span class="arrow">▾</span><span class="t"></span><span class="n"></span>`;
+    el.querySelector('.t')!.textContent = text;
+    // 畳んでいるときだけ件数を出す（開いていれば見れば分かる）
+    el.querySelector('.n')!.textContent = collapsed ? `（${count}）` : '';
+    el.addEventListener('click', () => this.toggleGroup(group));
     return el;
+  }
+
+  private toggleGroup(group: PickerGroup): void {
+    this.collapsed = this.isCollapsed(group)
+      ? this.collapsed.filter((g) => g !== group)
+      : [...this.collapsed, group];
+    const scroll = this.charCol.scrollTop;
+    this.renderCharacters();
+    this.charCol.scrollTop = scroll;
+    this.deps.onCollapsedChange(this.collapsed);
   }
 
   /** 左の列を「このキャラが選ばれている」表示にし、右にスタイルを出す */

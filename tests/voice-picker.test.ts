@@ -25,8 +25,11 @@ function setup(selected: number | null = 16) {
   const root = host.attachShadow({ mode: 'open' });
   const onSelect = vi.fn();
   const onFavoritesChange = vi.fn();
+  const onCollapsedChange = vi.fn();
   const loadIcon = vi.fn(async (id: number) => `blob:icon-${id}`);
-  const picker = new VoicePicker({ root, host, loadIcon, onSelect, onFavoritesChange });
+  const picker = new VoicePicker({
+    root, host, loadIcon, onSelect, onFavoritesChange, onCollapsedChange,
+  });
   root.appendChild(picker.element);
   picker.setOptions(OPTIONS, selected);
   const panel = root.querySelector<HTMLElement>('.picker')!;
@@ -37,7 +40,10 @@ function setup(selected: number | null = 16) {
     Array.from(root.querySelectorAll('.chars .item[data-kind="recent"]')).map(
       (e) => `${e.querySelector('.label')!.textContent}/${e.querySelector('.sub')!.textContent}`,
     );
-  const groups = () => Array.from(root.querySelectorAll('.chars .group')).map((e) => e.textContent);
+  const groups = () =>
+    Array.from(root.querySelectorAll('.chars .group .t')).map((e) => e.textContent);
+  const groupBtn = (key: string) =>
+    root.querySelector<HTMLElement>(`.chars .group[data-group="${key}"]`)!;
   const charRow = (name: string) =>
     Array.from(root.querySelectorAll<HTMLElement>('.chars .item[data-kind="char"]')).find((b) =>
       b.textContent!.includes(name),
@@ -45,7 +51,8 @@ function setup(selected: number | null = 16) {
   const styles = () =>
     Array.from(root.querySelectorAll('.styles .item .label')).map((e) => e.textContent);
   return {
-    root, picker, panel, onSelect, onFavoritesChange, loadIcon, chars, styles, recent, groups, charRow,
+    root, picker, panel, onSelect, onFavoritesChange, onCollapsedChange, loadIcon,
+    chars, styles, recent, groups, groupBtn, charRow,
   };
 }
 
@@ -225,5 +232,60 @@ describe('VoicePicker 最近使った・お気に入り', () => {
     expect(groups()).toEqual([]);
     expect(recent()).toEqual([]);
     expect(chars()).toEqual(['四国めたん', 'ずんだもん']);
+  });
+});
+
+describe('VoicePicker 区分を畳む', () => {
+  it('collapses すべてのキャラ by clicking its heading and reports it', () => {
+    const { picker, groupBtn, chars, recent, onCollapsedChange } = setup(16);
+    picker.setPrefs([36], ['u-zunda']);
+    picker.element.click();
+    groupBtn('all').click();
+
+    expect(onCollapsedChange).toHaveBeenCalledWith(['all']);
+    // お気に入りだけが残り、すべてのキャラは隠れる
+    expect(chars()).toEqual(['ずんだもん']);
+    expect(recent()).toEqual(['九州そら/ノーマル', '四国めたん/ささやき']);
+    // 畳んだ見出しには件数が出る
+    expect(groupBtn('all').textContent).toContain('（3）');
+    expect(groupBtn('all').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens it again with a second click', () => {
+    const { picker, groupBtn, chars, onCollapsedChange } = setup(16);
+    picker.setPrefs([], [], ['all']);
+    picker.element.click();
+    expect(chars()).toEqual([]);
+    groupBtn('all').click();
+    expect(onCollapsedChange).toHaveBeenLastCalledWith([]);
+    expect(chars()).toEqual(['四国めたん', 'ずんだもん', '春日部つむぎ', '九州そら']);
+  });
+
+  it('remembers the collapsed state across reopening', () => {
+    const { picker, chars } = setup(16);
+    picker.setPrefs([], [], ['all']);
+    picker.element.click();
+    picker.close();
+    picker.element.click();
+    expect(chars()).toEqual([]);
+  });
+
+  it('can collapse 最近使った too', () => {
+    const { picker, groupBtn, recent } = setup(16);
+    picker.setPrefs([36, 3], []);
+    picker.element.click();
+    groupBtn('recent').click();
+    expect(recent()).toEqual([]);
+    expect(groupBtn('recent').textContent).toContain('（3）');
+  });
+
+  it('ignores collapsing while searching so matches are never hidden', () => {
+    const { picker, root, chars } = setup(16);
+    picker.setPrefs([], [], ['all', 'favorites']);
+    picker.element.click();
+    const search = root.querySelector<HTMLInputElement>('.search')!;
+    search.value = 'ずんだ';
+    search.dispatchEvent(new Event('input'));
+    expect(chars()).toEqual(['ずんだもん']);
   });
 });

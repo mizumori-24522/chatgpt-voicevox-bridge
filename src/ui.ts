@@ -188,6 +188,7 @@ export class UiPanel {
           recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId),
         }),
       onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
+      onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups }),
     });
     this.el.voiceSlot.appendChild(this.picker.element);
 
@@ -244,7 +245,7 @@ export class UiPanel {
     (this.el.debug as HTMLInputElement).checked = s.debug;
     this.el.toggle.textContent = s.enabled ? '🔊 ON' : '🔇 OFF';
     this.el.toggle.classList.toggle('on', s.enabled);
-    this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers);
+    this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers, s.collapsedPickerGroups);
     this.picker.setSelected(s.styleId);
   }
 

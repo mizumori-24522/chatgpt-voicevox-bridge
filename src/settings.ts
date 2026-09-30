@@ -9,6 +9,8 @@ export type Settings = {
   recentStyleIds: number[];
   /** お気に入りのキャラ（speaker_uuid） */
   favoriteSpeakers: string[];
+  /** 話者メニューで畳んでいる区分 */
+  collapsedPickerGroups: ('recent' | 'favorites' | 'all')[];
   speedScale: number;
   volumeScale: number;
   pitchScale: number;
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   speakerLabel: '',
   recentStyleIds: [],
   favoriteSpeakers: [],
+  collapsedPickerGroups: [],
   speedScale: 1.15,
   volumeScale: 1.0,
   pitchScale: 0.0,
