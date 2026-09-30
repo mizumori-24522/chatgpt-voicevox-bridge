@@ -5,6 +5,10 @@ export type Settings = {
   enabled: boolean;
   styleId: number | null;
   speakerLabel: string;
+  /** 最近使ったスタイル ID（新しい順、最大 5） */
+  recentStyleIds: number[];
+  /** お気に入りのキャラ（speaker_uuid） */
+  favoriteSpeakers: string[];
   speedScale: number;
   volumeScale: number;
   pitchScale: number;
@@ -32,6 +36,8 @@ export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   styleId: null,
   speakerLabel: '',
+  recentStyleIds: [],
+  favoriteSpeakers: [],
   speedScale: 1.15,
   volumeScale: 1.0,
   pitchScale: 0.0,

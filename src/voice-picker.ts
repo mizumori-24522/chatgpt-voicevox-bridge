@@ -6,6 +6,9 @@ import type { StyleOption } from './voicevox-client';
  * 127 行のプルダウンを縦にスクロールする代わりに、
  * 「キャラクター → スタイル」の 2 段メニューにする（ブックマークの入れ子と同じ形）。
  * 左でキャラにマウスを乗せると、右にそのキャラのスタイルが出る。
+ *
+ * 左の列は上から「最近使った」「★ お気に入り」「すべてのキャラ」。
+ * 43 人全員を使うことはまず無いので、よく使う話者に 1 クリックで届くようにする。
  */
 
 export type PickerDeps = {
@@ -13,7 +16,17 @@ export type PickerDeps = {
   host: HTMLElement;
   loadIcon: (styleId: number) => Promise<string | null>;
   onSelect: (option: StyleOption) => void;
+  /** お気に入りの付け外し。引数は変更後のお気に入り（キャラの UUID）一覧 */
+  onFavoritesChange: (favorites: string[]) => void;
 };
+
+/** 「最近使った」に並べる数 */
+export const RECENT_LIMIT = 5;
+
+/** 選んだスタイルを「最近使った」の先頭へ入れる（重複は除き、上限を超えたら古いものから落とす） */
+export function pushRecent(list: number[], styleId: number, limit = RECENT_LIMIT): number[] {
+  return [styleId, ...list.filter((id) => id !== styleId)].slice(0, limit);
+}
 
 type Character = { name: string; uuid: string; styles: StyleOption[] };
 
@@ -53,6 +66,16 @@ export const PICKER_CSS = `
 .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .count, .item .check { flex: none; font-size: 11px; opacity: .6; }
 .empty { padding: 12px; font-size: 12px; opacity: .6; }
+.group { padding: 8px 6px 3px; font-size: 11px; font-weight: 600; opacity: .55; letter-spacing: .02em; }
+.group:first-child { padding-top: 2px; }
+.item .sub { flex: none; max-width: 45%; font-size: 11px; opacity: .6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.star { flex: none; width: 18px; text-align: center; font-size: 13px; line-height: 1;
+  opacity: 0; color: #d4a017; cursor: pointer; }
+.item:hover .star, .star.on { opacity: 1; }
+.star:not(.on) { color: inherit; }
+.item:hover .star:not(.on) { opacity: .45; }
+.star:hover { opacity: 1 !important; transform: scale(1.15); }
 
 @media (prefers-color-scheme: dark) {
   .picker { background: #202123; color: #ececec; border-color: #3a3a3a; }
@@ -71,6 +94,8 @@ export class VoicePicker {
   private characters: Character[] = [];
   private selectedId: number | null = null;
   private activeChar: string | null = null;
+  private recent: number[] = [];
+  private favorites: string[] = [];
 
   constructor(private deps: PickerDeps) {
     this.trigger = document.createElement('button');
@@ -134,6 +159,13 @@ export class VoicePicker {
     this.setSelected(selectedId);
   }
 
+  /** 「最近使った」（スタイル ID）と「お気に入り」（キャラの UUID）を渡す */
+  setPrefs(recent: number[], favorites: string[]): void {
+    this.recent = recent;
+    this.favorites = favorites;
+    if (!this.panel.hidden) this.renderCharacters();
+  }
+
   setSelected(styleId: number | null): void {
     this.selectedId = styleId;
     const opt = this.find(styleId);
@@ -172,7 +204,8 @@ export class VoicePicker {
     this.search.value = '';
     this.activeChar = this.find(this.selectedId)?.speakerUuid ?? this.characters[0].uuid;
     this.renderCharacters();
-    this.charCol.querySelector<HTMLElement>('.item.active')?.scrollIntoView?.({ block: 'center' });
+    // 「最近使った」が一番上にあるので、スクロールは先頭のまま
+    this.charCol.scrollTop = 0;
     this.search.focus();
   }
 
@@ -187,6 +220,12 @@ export class VoicePicker {
     return styles.length ? styles : null;
   }
 
+  /** 今使っているスタイルを先頭にした「最近使った」の中身 */
+  private recentOptions(): StyleOption[] {
+    const ids = this.selectedId === null ? this.recent : pushRecent(this.recent, this.selectedId);
+    return ids.map((id) => this.find(id)).filter((o): o is StyleOption => o !== undefined);
+  }
+
   private renderCharacters(): void {
     const q = this.search.value.trim();
     this.charCol.textContent = '';
@@ -199,38 +238,117 @@ export class VoicePicker {
     }
     if (!visible.some((c) => c.uuid === this.activeChar)) this.activeChar = visible[0].uuid;
 
-    const current = this.find(this.selectedId);
-    for (const c of visible) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'item';
-      if (c.uuid === this.activeChar) btn.classList.add('active');
-      if (current?.speakerUuid === c.uuid) btn.classList.add('current');
-      btn.innerHTML = `<img class="face" alt=""><span class="label"></span><span class="count"></span>`;
-      btn.querySelector('.label')!.textContent = c.name;
-      btn.querySelector('.count')!.textContent = c.styles.length > 1 ? `${c.styles.length} ›` : '';
-      this.setIcon(btn.querySelector('.face')!, c.styles[0].styleId);
+    if (q) {
+      // 絞り込み中は、区分けせずに当てはまるキャラだけを並べる
+      for (const c of visible) this.charCol.appendChild(this.characterRow(c, q));
+    } else {
+      const recent = this.recentOptions();
+      if (recent.length > 0) {
+        this.charCol.appendChild(this.groupTitle('最近使った'));
+        for (const o of recent) this.charCol.appendChild(this.recentRow(o));
+      }
 
-      // ブックマークメニューと同じく、乗せただけで右にスタイルを出す
-      const activate = () => {
-        if (this.activeChar === c.uuid) return;
-        this.activeChar = c.uuid;
-        this.charCol.querySelectorAll('.item.active').forEach((el) => el.classList.remove('active'));
-        btn.classList.add('active');
-        this.renderStyles(c, q);
-      };
-      btn.addEventListener('mouseenter', activate);
-      btn.addEventListener('focus', activate);
-      // スタイルが 1 つしかないキャラは、左をクリックしただけで決定
-      btn.addEventListener('click', () => {
-        activate();
-        if (c.styles.length === 1) this.choose(c.styles[0]);
-      });
-      this.charCol.appendChild(btn);
+      const favs = this.favorites
+        .map((uuid) => this.characters.find((c) => c.uuid === uuid))
+        .filter((c): c is Character => c !== undefined);
+      if (favs.length > 0) {
+        this.charCol.appendChild(this.groupTitle('★ お気に入り'));
+        for (const c of favs) this.charCol.appendChild(this.characterRow(c, q));
+      }
+
+      this.charCol.appendChild(this.groupTitle('すべてのキャラ'));
+      for (const c of this.characters) {
+        if (this.favorites.includes(c.uuid)) continue;
+        this.charCol.appendChild(this.characterRow(c, q));
+      }
     }
 
     const active = visible.find((c) => c.uuid === this.activeChar)!;
     this.renderStyles(active, q);
+  }
+
+  private groupTitle(text: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.className = 'group';
+    el.textContent = text;
+    return el;
+  }
+
+  /** 左の列を「このキャラが選ばれている」表示にし、右にスタイルを出す */
+  private activate(c: Character, row: HTMLElement, q: string): void {
+    this.charCol.querySelectorAll('.item.active').forEach((el) => el.classList.remove('active'));
+    row.classList.add('active');
+    if (this.activeChar === c.uuid) return;
+    this.activeChar = c.uuid;
+    this.renderStyles(c, q);
+  }
+
+  /** 「最近使った」の行。スタイル単位で、押せばその場で決定 */
+  private recentRow(o: StyleOption): HTMLButtonElement {
+    const c = this.characters.find((ch) => ch.uuid === o.speakerUuid)!;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item';
+    btn.dataset.kind = 'recent';
+    btn.dataset.styleId = String(o.styleId);
+    if (o.styleId === this.selectedId) btn.classList.add('current');
+    btn.innerHTML = `<img class="face" alt=""><span class="label"></span><span class="sub"></span>`;
+    btn.querySelector('.label')!.textContent = o.speakerName;
+    btn.querySelector('.sub')!.textContent = o.styleName;
+    this.setIcon(btn.querySelector('.face')!, o.styleId);
+    btn.addEventListener('mouseenter', () => this.activate(c, btn, ''));
+    btn.addEventListener('focus', () => this.activate(c, btn, ''));
+    btn.addEventListener('click', () => this.choose(o));
+    return btn;
+  }
+
+  /** キャラの行。乗せると右にスタイル、☆ でお気に入りの付け外し */
+  private characterRow(c: Character, q: string): HTMLButtonElement {
+    const current = this.find(this.selectedId);
+    const fav = this.favorites.includes(c.uuid);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item';
+    btn.dataset.kind = 'char';
+    btn.dataset.uuid = c.uuid;
+    if (c.uuid === this.activeChar) btn.classList.add('active');
+    if (current?.speakerUuid === c.uuid) btn.classList.add('current');
+    btn.innerHTML =
+      `<img class="face" alt=""><span class="label"></span>` +
+      `<span class="count"></span><span class="star" data-star role="button"></span>`;
+    btn.querySelector('.label')!.textContent = c.name;
+    btn.querySelector('.count')!.textContent = c.styles.length > 1 ? `${c.styles.length} ›` : '';
+    const star = btn.querySelector<HTMLElement>('.star')!;
+    star.textContent = fav ? '★' : '☆';
+    star.classList.toggle('on', fav);
+    star.title = fav ? 'お気に入りから外す' : 'お気に入りに追加';
+    this.setIcon(btn.querySelector('.face')!, c.styles[0].styleId);
+
+    // ブックマークメニューと同じく、乗せただけで右にスタイルを出す
+    btn.addEventListener('mouseenter', () => this.activate(c, btn, q));
+    btn.addEventListener('focus', () => this.activate(c, btn, q));
+    btn.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('[data-star]')) {
+        e.preventDefault();
+        this.toggleFavorite(c.uuid);
+        return;
+      }
+      this.activate(c, btn, q);
+      // スタイルが 1 つしかないキャラは、左をクリックしただけで決定
+      if (c.styles.length === 1) this.choose(c.styles[0]);
+    });
+    return btn;
+  }
+
+  private toggleFavorite(uuid: string): void {
+    const next = this.favorites.includes(uuid)
+      ? this.favorites.filter((u) => u !== uuid)
+      : [...this.favorites, uuid];
+    this.favorites = next;
+    const scroll = this.charCol.scrollTop;
+    this.renderCharacters();
+    this.charCol.scrollTop = scroll;
+    this.deps.onFavoritesChange(next);
   }
 
   private renderStyles(c: Character, q: string): void {

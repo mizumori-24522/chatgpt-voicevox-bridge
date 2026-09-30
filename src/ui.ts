@@ -1,6 +1,6 @@
 import type { Settings } from './settings';
 import type { StyleOption } from './voicevox-client';
-import { VoicePicker, PICKER_CSS } from './voice-picker';
+import { VoicePicker, PICKER_CSS, pushRecent } from './voice-picker';
 
 export type UiCallbacks = {
   onToggleEnabled: (v: boolean) => void;
@@ -181,7 +181,13 @@ export class UiPanel {
       root: this.root,
       host: this.host,
       loadIcon: this.cb.loadIcon,
-      onSelect: (opt) => this.cb.onChange({ styleId: opt.styleId, speakerLabel: opt.label }),
+      onSelect: (opt) =>
+        this.cb.onChange({
+          styleId: opt.styleId,
+          speakerLabel: opt.label,
+          recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId),
+        }),
+      onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
     });
     this.el.voiceSlot.appendChild(this.picker.element);
 
@@ -238,6 +244,7 @@ export class UiPanel {
     (this.el.debug as HTMLInputElement).checked = s.debug;
     this.el.toggle.textContent = s.enabled ? '🔊 ON' : '🔇 OFF';
     this.el.toggle.classList.toggle('on', s.enabled);
+    this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers);
     this.picker.setSelected(s.styleId);
   }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT → VOICEVOX Bridge
 // @namespace    local.chatgpt-voicevox-bridge
-// @version      0.2.2
+// @version      0.3.0
 // @author       mizumori-24522
 // @description  ChatGPT Web の回答を VOICEVOX で逐次読み上げする
 // @homepageURL  https://github.com/mizumori-24522/chatgpt-voicevox-bridge
@@ -23,6 +23,8 @@
     enabled: true,
     styleId: null,
     speakerLabel: "",
+    recentStyleIds: [],
+    favoriteSpeakers: [],
     speedScale: 1.15,
     volumeScale: 1,
     pitchScale: 0,
@@ -1116,6 +1118,10 @@ ${el.textContent ?? ""}
       this.live = true;
     }
   }
+  const RECENT_LIMIT = 5;
+  function pushRecent(list, styleId, limit = RECENT_LIMIT) {
+    return [styleId, ...list.filter((id) => id !== styleId)].slice(0, limit);
+  }
   const PICKER_CSS = `
 .voice { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px;
   font: inherit; color: inherit; text-align: left; cursor: pointer;
@@ -1152,6 +1158,16 @@ ${el.textContent ?? ""}
 .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .count, .item .check { flex: none; font-size: 11px; opacity: .6; }
 .empty { padding: 12px; font-size: 12px; opacity: .6; }
+.group { padding: 8px 6px 3px; font-size: 11px; font-weight: 600; opacity: .55; letter-spacing: .02em; }
+.group:first-child { padding-top: 2px; }
+.item .sub { flex: none; max-width: 45%; font-size: 11px; opacity: .6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.star { flex: none; width: 18px; text-align: center; font-size: 13px; line-height: 1;
+  opacity: 0; color: #d4a017; cursor: pointer; }
+.item:hover .star, .star.on { opacity: 1; }
+.star:not(.on) { color: inherit; }
+.item:hover .star:not(.on) { opacity: .45; }
+.star:hover { opacity: 1 !important; transform: scale(1.15); }
 
 @media (prefers-color-scheme: dark) {
   .picker { background: #202123; color: #ececec; border-color: #3a3a3a; }
@@ -1165,6 +1181,8 @@ ${el.textContent ?? ""}
       this.characters = [];
       this.selectedId = null;
       this.activeChar = null;
+      this.recent = [];
+      this.favorites = [];
       this.trigger = document.createElement("button");
       this.trigger.className = "voice";
       this.trigger.type = "button";
@@ -1218,6 +1236,12 @@ ${el.textContent ?? ""}
       this.characters = Array.from(byUuid.values());
       this.setSelected(selectedId);
     }
+    /** 「最近使った」（スタイル ID）と「お気に入り」（キャラの UUID）を渡す */
+    setPrefs(recent, favorites) {
+      this.recent = recent;
+      this.favorites = favorites;
+      if (!this.panel.hidden) this.renderCharacters();
+    }
     setSelected(styleId) {
       this.selectedId = styleId;
       const opt = this.find(styleId);
@@ -1247,13 +1271,13 @@ ${el.textContent ?? ""}
       else this.close();
     }
     open() {
-      var _a, _b, _c;
+      var _a;
       if (this.characters.length === 0) return;
       this.panel.hidden = false;
       this.search.value = "";
       this.activeChar = ((_a = this.find(this.selectedId)) == null ? void 0 : _a.speakerUuid) ?? this.characters[0].uuid;
       this.renderCharacters();
-      (_c = (_b = this.charCol.querySelector(".item.active")) == null ? void 0 : _b.scrollIntoView) == null ? void 0 : _c.call(_b, { block: "center" });
+      this.charCol.scrollTop = 0;
       this.search.focus();
     }
     close() {
@@ -1265,6 +1289,11 @@ ${el.textContent ?? ""}
       const styles = c.styles.filter((s) => s.styleName.includes(q));
       return styles.length ? styles : null;
     }
+    /** 今使っているスタイルを先頭にした「最近使った」の中身 */
+    recentOptions() {
+      const ids = this.selectedId === null ? this.recent : pushRecent(this.recent, this.selectedId);
+      return ids.map((id) => this.find(id)).filter((o) => o !== void 0);
+    }
     renderCharacters() {
       const q = this.search.value.trim();
       this.charCol.textContent = "";
@@ -1275,34 +1304,99 @@ ${el.textContent ?? ""}
         return;
       }
       if (!visible.some((c) => c.uuid === this.activeChar)) this.activeChar = visible[0].uuid;
-      const current = this.find(this.selectedId);
-      for (const c of visible) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "item";
-        if (c.uuid === this.activeChar) btn.classList.add("active");
-        if ((current == null ? void 0 : current.speakerUuid) === c.uuid) btn.classList.add("current");
-        btn.innerHTML = `<img class="face" alt=""><span class="label"></span><span class="count"></span>`;
-        btn.querySelector(".label").textContent = c.name;
-        btn.querySelector(".count").textContent = c.styles.length > 1 ? `${c.styles.length} ›` : "";
-        this.setIcon(btn.querySelector(".face"), c.styles[0].styleId);
-        const activate = () => {
-          if (this.activeChar === c.uuid) return;
-          this.activeChar = c.uuid;
-          this.charCol.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
-          btn.classList.add("active");
-          this.renderStyles(c, q);
-        };
-        btn.addEventListener("mouseenter", activate);
-        btn.addEventListener("focus", activate);
-        btn.addEventListener("click", () => {
-          activate();
-          if (c.styles.length === 1) this.choose(c.styles[0]);
-        });
-        this.charCol.appendChild(btn);
+      if (q) {
+        for (const c of visible) this.charCol.appendChild(this.characterRow(c, q));
+      } else {
+        const recent = this.recentOptions();
+        if (recent.length > 0) {
+          this.charCol.appendChild(this.groupTitle("最近使った"));
+          for (const o of recent) this.charCol.appendChild(this.recentRow(o));
+        }
+        const favs = this.favorites.map((uuid) => this.characters.find((c) => c.uuid === uuid)).filter((c) => c !== void 0);
+        if (favs.length > 0) {
+          this.charCol.appendChild(this.groupTitle("★ お気に入り"));
+          for (const c of favs) this.charCol.appendChild(this.characterRow(c, q));
+        }
+        this.charCol.appendChild(this.groupTitle("すべてのキャラ"));
+        for (const c of this.characters) {
+          if (this.favorites.includes(c.uuid)) continue;
+          this.charCol.appendChild(this.characterRow(c, q));
+        }
       }
       const active = visible.find((c) => c.uuid === this.activeChar);
       this.renderStyles(active, q);
+    }
+    groupTitle(text) {
+      const el = document.createElement("div");
+      el.className = "group";
+      el.textContent = text;
+      return el;
+    }
+    /** 左の列を「このキャラが選ばれている」表示にし、右にスタイルを出す */
+    activate(c, row, q) {
+      this.charCol.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
+      row.classList.add("active");
+      if (this.activeChar === c.uuid) return;
+      this.activeChar = c.uuid;
+      this.renderStyles(c, q);
+    }
+    /** 「最近使った」の行。スタイル単位で、押せばその場で決定 */
+    recentRow(o) {
+      const c = this.characters.find((ch) => ch.uuid === o.speakerUuid);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "item";
+      btn.dataset.kind = "recent";
+      btn.dataset.styleId = String(o.styleId);
+      if (o.styleId === this.selectedId) btn.classList.add("current");
+      btn.innerHTML = `<img class="face" alt=""><span class="label"></span><span class="sub"></span>`;
+      btn.querySelector(".label").textContent = o.speakerName;
+      btn.querySelector(".sub").textContent = o.styleName;
+      this.setIcon(btn.querySelector(".face"), o.styleId);
+      btn.addEventListener("mouseenter", () => this.activate(c, btn, ""));
+      btn.addEventListener("focus", () => this.activate(c, btn, ""));
+      btn.addEventListener("click", () => this.choose(o));
+      return btn;
+    }
+    /** キャラの行。乗せると右にスタイル、☆ でお気に入りの付け外し */
+    characterRow(c, q) {
+      const current = this.find(this.selectedId);
+      const fav = this.favorites.includes(c.uuid);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "item";
+      btn.dataset.kind = "char";
+      btn.dataset.uuid = c.uuid;
+      if (c.uuid === this.activeChar) btn.classList.add("active");
+      if ((current == null ? void 0 : current.speakerUuid) === c.uuid) btn.classList.add("current");
+      btn.innerHTML = `<img class="face" alt=""><span class="label"></span><span class="count"></span><span class="star" data-star role="button"></span>`;
+      btn.querySelector(".label").textContent = c.name;
+      btn.querySelector(".count").textContent = c.styles.length > 1 ? `${c.styles.length} ›` : "";
+      const star = btn.querySelector(".star");
+      star.textContent = fav ? "★" : "☆";
+      star.classList.toggle("on", fav);
+      star.title = fav ? "お気に入りから外す" : "お気に入りに追加";
+      this.setIcon(btn.querySelector(".face"), c.styles[0].styleId);
+      btn.addEventListener("mouseenter", () => this.activate(c, btn, q));
+      btn.addEventListener("focus", () => this.activate(c, btn, q));
+      btn.addEventListener("click", (e) => {
+        if (e.target.closest("[data-star]")) {
+          e.preventDefault();
+          this.toggleFavorite(c.uuid);
+          return;
+        }
+        this.activate(c, btn, q);
+        if (c.styles.length === 1) this.choose(c.styles[0]);
+      });
+      return btn;
+    }
+    toggleFavorite(uuid) {
+      const next = this.favorites.includes(uuid) ? this.favorites.filter((u) => u !== uuid) : [...this.favorites, uuid];
+      this.favorites = next;
+      const scroll = this.charCol.scrollTop;
+      this.renderCharacters();
+      this.charCol.scrollTop = scroll;
+      this.deps.onFavoritesChange(next);
     }
     renderStyles(c, q) {
       this.styleCol.textContent = "";
@@ -1499,7 +1593,12 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
         root: this.root,
         host: this.host,
         loadIcon: this.cb.loadIcon,
-        onSelect: (opt) => this.cb.onChange({ styleId: opt.styleId, speakerLabel: opt.label })
+        onSelect: (opt) => this.cb.onChange({
+          styleId: opt.styleId,
+          speakerLabel: opt.label,
+          recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId)
+        }),
+        onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers })
       });
       this.el.voiceSlot.appendChild(this.picker.element);
       const range = (key, input, out) => {
@@ -1551,6 +1650,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       this.el.debug.checked = s.debug;
       this.el.toggle.textContent = s.enabled ? "🔊 ON" : "🔇 OFF";
       this.el.toggle.classList.toggle("on", s.enabled);
+      this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers);
       this.picker.setSelected(s.styleId);
     }
     setSpeakers(options, selectedId) {
