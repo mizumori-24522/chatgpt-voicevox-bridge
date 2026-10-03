@@ -8,7 +8,10 @@ import { log, warn } from './logger';
  *
  * ■ 2026-09-26 に実機で確認した構造（新）
  *   <div data-content-search-turn-key="<ターン>">        ← 最初は fallback-turn-N、後で UUID に差し替わる
- *     <div data-content-search-unit-key="<ターン>:0:user">
+ *     <div data-content-search-unit-key="<ターン>:0:user">           ← 幅いっぱい。添付画像はこの外（上）
+ *       <div data-user-message-bubble="true">                       ← 吹き出し（右寄せ・overflow: hidden）
+ *         <div class="whitespace-pre-wrap">                         ← 質問の本文
+ *       （吹き出しの下に コピー・共有・編集 のボタン列）
  *     <div data-content-search-unit-key="<ターン>:2:assistant"
  *          data-chatgpt-search-message-ids="<回答ID> ...">
  *       <div data-chatgpt-selection-message-id="<回答ID>">
@@ -35,6 +38,7 @@ const TURN_SEL = '[data-turn]';
 const TURN_FALLBACK_SEL = '[data-testid^="conversation-turn-"]';
 const ASSISTANT_SEL = '[data-message-author-role="assistant"]';
 const USER_SEL = '[data-message-author-role="user"]';
+const USER_BUBBLE_SEL = '[data-user-message-bubble]';
 const CONTENT_SELECTORS = [
   '[data-markdown-text-style="assistant-message"]',
   '.markdown',
@@ -83,6 +87,19 @@ export class ChatGptAdapter {
   /** 発言から本文要素を取り出す */
   contentOfTurn(turn: HTMLElement): Element {
     return this.findContentRoot(this.messageOf(turn, 'assistant'));
+  }
+
+  /** 質問の発言を出現順に全部返す（任意の質問を指定して読ませる用） */
+  userTurns(): HTMLElement[] {
+    const units = this.units('user');
+    if (units.length > 0) return units;
+    return Array.from(document.querySelectorAll<HTMLElement>(USER_SEL));
+  }
+
+  /** 質問の発言から本文要素を取り出す（添付やボタン列、吹き出しに足された時刻などは含めない） */
+  contentOfUserTurn(turn: HTMLElement): Element {
+    const bubble = turn.querySelector(USER_BUBBLE_SEL);
+    return bubble?.querySelector('.whitespace-pre-wrap') ?? bubble ?? turn;
   }
 
   getLatestAssistantMessage(): AssistantMessage | null {

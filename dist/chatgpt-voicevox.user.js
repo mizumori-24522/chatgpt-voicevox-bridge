@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT → VOICEVOX Bridge
 // @namespace    local.chatgpt-voicevox-bridge
-// @version      0.3.0
+// @version      0.4.0
 // @author       mizumori-24522
 // @description  ChatGPT Web の回答を VOICEVOX で逐次読み上げする
 // @homepageURL  https://github.com/mizumori-24522/chatgpt-voicevox-bridge
@@ -23,6 +23,7 @@
     enabled: true,
     styleId: null,
     speakerLabel: "",
+    questionStyleId: null,
     recentStyleIds: [],
     favoriteSpeakers: [],
     collapsedPickerGroups: [],
@@ -321,10 +322,11 @@
       this.waiters = [];
       this.generation = 0;
     }
-    enqueue(text) {
+    /** styleId を渡すと、そのチャンクだけ指定の話者で読む（省略時は今選んでいる話者） */
+    enqueue(text, styleId) {
       const t = text.trim();
       if (!t) return;
-      this.textQueue.push(t);
+      this.textQueue.push({ text: t, styleId });
       log("Playback", "enqueue", t.slice(0, 40));
       this.notify();
       this.emit();
@@ -396,13 +398,13 @@
             await this.wait();
             continue;
           }
-          const styleId = this.deps.getStyleId();
+          const styleId = this.textQueue[0].styleId ?? this.deps.getStyleId();
           if (styleId === null) {
             this.deps.onError("話者が選択されていません");
             this.textQueue = [];
             break;
           }
-          const text = this.textQueue.shift();
+          const { text } = this.textQueue.shift();
           this.abortController = new AbortController();
           try {
             const wav = await this.deps.client.synthesize(
@@ -490,6 +492,7 @@
   const TURN_FALLBACK_SEL = '[data-testid^="conversation-turn-"]';
   const ASSISTANT_SEL = '[data-message-author-role="assistant"]';
   const USER_SEL = '[data-message-author-role="user"]';
+  const USER_BUBBLE_SEL = "[data-user-message-bubble]";
   const CONTENT_SELECTORS = [
     '[data-markdown-text-style="assistant-message"]',
     ".markdown",
@@ -528,6 +531,17 @@
     /** 発言から本文要素を取り出す */
     contentOfTurn(turn) {
       return this.findContentRoot(this.messageOf(turn, "assistant"));
+    }
+    /** 質問の発言を出現順に全部返す（任意の質問を指定して読ませる用） */
+    userTurns() {
+      const units = this.units("user");
+      if (units.length > 0) return units;
+      return Array.from(document.querySelectorAll(USER_SEL));
+    }
+    /** 質問の発言から本文要素を取り出す（添付やボタン列、吹き出しに足された時刻などは含めない） */
+    contentOfUserTurn(turn) {
+      const bubble = turn.querySelector(USER_BUBBLE_SEL);
+      return (bubble == null ? void 0 : bubble.querySelector(".whitespace-pre-wrap")) ?? bubble ?? turn;
     }
     getLatestAssistantMessage() {
       const units = this.units("assistant");
@@ -1133,6 +1147,11 @@ ${el.textContent ?? ""}
 .voice .who b { display: block; font-size: 13px; }
 .voice .who span { font-size: 11px; opacity: .75; }
 .voice .caret { opacity: .6; }
+.voice.compact { gap: 6px; padding: 3px 6px; border-radius: 8px; }
+.voice.compact .face { width: 24px; height: 24px; border-radius: 6px; }
+.voice.compact .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice.compact .who b { display: inline; font-size: 12px; margin-right: 4px; }
+.voice.compact .face:not([src]) { display: none; }
 .face { flex: none; width: 28px; height: 28px; border-radius: 8px; object-fit: cover;
   background: rgba(127,127,127,.15); }
 
@@ -1194,7 +1213,7 @@ ${el.textContent ?? ""}
       this.favorites = [];
       this.collapsed = [];
       this.trigger = document.createElement("button");
-      this.trigger.className = "voice";
+      this.trigger.className = deps.compact ? "voice compact" : "voice";
       this.trigger.type = "button";
       this.trigger.innerHTML = `
       <img class="face" alt="">
@@ -1260,7 +1279,7 @@ ${el.textContent ?? ""}
       const name = this.trigger.querySelector(".who b");
       const style = this.trigger.querySelector(".who span");
       if (!opt) {
-        name.textContent = this.characters.length ? "話者を選んでください" : "話者なし";
+        name.textContent = this.characters.length ? this.deps.emptyLabel ?? "話者を選んでください" : "話者なし";
         style.textContent = "";
         face.removeAttribute("src");
         return;
@@ -1282,11 +1301,12 @@ ${el.textContent ?? ""}
       else this.close();
     }
     open() {
-      var _a;
+      var _a, _b, _c;
       if (this.characters.length === 0) return;
+      (_b = (_a = this.deps).onOpen) == null ? void 0 : _b.call(_a);
       this.panel.hidden = false;
       this.search.value = "";
-      this.activeChar = ((_a = this.find(this.selectedId)) == null ? void 0 : _a.speakerUuid) ?? this.characters[0].uuid;
+      this.activeChar = ((_c = this.find(this.selectedId)) == null ? void 0 : _c.speakerUuid) ?? this.characters[0].uuid;
       this.renderCharacters();
       this.charCol.scrollTop = 0;
       this.search.focus();
@@ -1479,6 +1499,7 @@ ${el.textContent ?? ""}
 .body.hidden { display: none; }
 .row { display: flex; align-items: center; gap: 6px; }
 .row > label { flex: none; opacity: .8; }
+.slot { flex: 1; min-width: 0; }
 select, input[type=number] { flex: 1; min-width: 0; font: inherit; padding: 2px 4px;
   border: 1px solid #ccc; border-radius: 6px; background: #fff; color: inherit; }
 input[type=range] { flex: 1; min-width: 0; }
@@ -1526,6 +1547,10 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       </div>
       <div class="body" id="body">
         <div class="row" id="voiceSlot"></div>
+        <div class="row" title="自分の質問を「🔊 この質問を読む」で読むときの声">
+          <label>質問</label>
+          <div class="slot" id="questionVoiceSlot"></div>
+        </div>
         <div class="row">
           <label>話速</label>
           <input type="range" id="speed" min="0.5" max="2" step="0.05">
@@ -1592,6 +1617,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
         conn: q("conn"),
         body: q("body"),
         voiceSlot: q("voiceSlot"),
+        questionVoiceSlot: q("questionVoiceSlot"),
         speed: q("speed"),
         speedVal: q("speedVal"),
         volume: q("volume"),
@@ -1616,6 +1642,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
         this.collapsed = !this.collapsed;
         this.el.body.classList.toggle("hidden", this.collapsed);
         this.picker.close();
+        this.questionPicker.close();
       });
       this.el.toggle.addEventListener("click", () => this.cb.onToggleEnabled(!this.settings.enabled));
       this.el.stop.addEventListener("click", () => this.cb.onStop());
@@ -1633,9 +1660,25 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
           recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId)
         }),
         onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
-        onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups })
+        onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups }),
+        onOpen: () => this.questionPicker.close()
       });
       this.el.voiceSlot.appendChild(this.picker.element);
+      this.questionPicker = new VoicePicker({
+        root: this.root,
+        host: this.host,
+        loadIcon: this.cb.loadIcon,
+        compact: true,
+        emptyLabel: "回答と同じ声",
+        onSelect: (opt) => this.cb.onChange({
+          questionStyleId: opt.styleId,
+          recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId)
+        }),
+        onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
+        onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups }),
+        onOpen: () => this.picker.close()
+      });
+      this.el.questionVoiceSlot.appendChild(this.questionPicker.element);
       const range = (key, input, out) => {
         input.addEventListener("input", () => {
           const v = Number(input.value);
@@ -1687,9 +1730,12 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       this.el.toggle.classList.toggle("on", s.enabled);
       this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers, s.collapsedPickerGroups);
       this.picker.setSelected(s.styleId);
+      this.questionPicker.setPrefs(s.recentStyleIds, s.favoriteSpeakers, s.collapsedPickerGroups);
+      this.questionPicker.setSelected(s.questionStyleId);
     }
     setSpeakers(options, selectedId) {
       this.picker.setOptions(options, selectedId);
+      this.questionPicker.setOptions(options, this.settings.questionStyleId);
     }
     setConnection(state, text) {
       this.el.dot.className = `dot ${state}`;
@@ -1715,15 +1761,26 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
   const BTN_ATTR = "data-cvb-read-btn";
   const MARK_ATTR = "data-cvb-actions";
   const STYLE_ID = "cvb-actions-style";
+  const LABELS = {
+    answer: "🔊 この回答を読む",
+    question: "🔊 この質問を読む"
+  };
   const CSS = `
 [${BTN_ATTR}] {
-  position: absolute; top: 6px; right: 6px; z-index: 50;
+  position: absolute; z-index: 50;
+  box-sizing: border-box; height: 22px; padding: 0 8px;
+  display: inline-flex; align-items: center; white-space: nowrap;
   font: 11px/1 -apple-system, "Hiragino Sans", sans-serif;
-  padding: 4px 8px; border-radius: 999px; cursor: pointer;
+  border-radius: 999px; cursor: pointer;
   border: 1px solid rgba(128,128,128,.45);
   background: rgba(127,127,127,.15); color: inherit;
   opacity: 0; transition: opacity .12s ease;
 }
+[${BTN_ATTR}="answer"] { top: -24px; left: 50%; transform: translateX(-50%); }
+/* ChatGPT のボタン列の位置が測れないときの置き場所。測れたら alignQuestionButton が上書きする */
+[${BTN_ATTR}="question"] { bottom: 5px; right: 104px; }
+/* 回答のボタンは枠の外にあるので、回答からボタンへマウスを動かす途中で消えないよう隙間を埋める */
+[${BTN_ATTR}="answer"]::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 4px; }
 [${MARK_ATTR}]:hover > [${BTN_ATTR}],
 [${BTN_ATTR}]:focus-visible { opacity: 1; }
 [${BTN_ATTR}]:hover { background: rgba(34,197,94,.25); border-color: rgba(34,197,94,.7); }
@@ -1735,23 +1792,37 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
     style.textContent = CSS;
     document.head.appendChild(style);
   }
-  function syncReadButtons(turns, onRead) {
+  function syncReadButtons(turns, kind, onRead) {
     ensureStyle();
     for (const turn of turns) {
-      if (turn.hasAttribute(MARK_ATTR)) continue;
+      const existing = turn.querySelector(`:scope > [${BTN_ATTR}]`);
+      if (existing) {
+        if (kind === "question") alignQuestionButton(turn, existing);
+        continue;
+      }
       turn.setAttribute(MARK_ATTR, "");
       if (getComputedStyle(turn).position === "static") turn.style.position = "relative";
       const btn = document.createElement("button");
-      btn.setAttribute(BTN_ATTR, "");
+      btn.setAttribute(BTN_ATTR, kind);
       btn.type = "button";
-      btn.textContent = "🔊 この回答を読む";
+      btn.textContent = LABELS[kind];
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         onRead(turn);
       });
       turn.appendChild(btn);
+      if (kind === "question") alignQuestionButton(turn, btn);
     }
+  }
+  function alignQuestionButton(turn, btn) {
+    const natives = Array.from(turn.querySelectorAll("button")).filter((b) => b !== btn && b.closest("[data-user-message-bubble]") === null).map((b) => b.getBoundingClientRect()).filter((r) => r.width > 0);
+    if (natives.length === 0) return;
+    const box = turn.getBoundingClientRect();
+    const left = Math.min(...natives.map((r) => r.left));
+    const row = natives[0];
+    btn.style.right = `${Math.round(box.right - left + 6)}px`;
+    btn.style.bottom = `${Math.round(box.bottom - row.bottom + (row.height - btn.offsetHeight) / 2)}px`;
   }
   function removeReadButtons() {
     document.querySelectorAll(`[${BTN_ATTR}]`).forEach((b) => b.remove());
@@ -1859,7 +1930,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       preferredChunkLength: settings.preferredChunkLength,
       maximumChunkLength: settings.maximumChunkLength
     });
-    function speakElement(el) {
+    function speakElement(el, styleId) {
       stopSpeaking();
       const text = extractSpeechText(el, sanitizeOptions());
       if (!text) {
@@ -1868,7 +1939,11 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       }
       const chunker = new SpeechChunker(chunkerOptions());
       chunker.append(text);
-      for (const c of chunker.take(true)) queue.enqueue(c);
+      for (const c of chunker.take(true)) queue.enqueue(c, styleId);
+    }
+    function questionStyleId() {
+      const id = settings.questionStyleId;
+      return id !== null && styleOptions.some((o) => o.styleId === id) ? id : void 0;
     }
     function speakSelection() {
       const fragment = getSelectionFragment();
@@ -1946,7 +2021,12 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       }
       if (!settings.enabled) return;
       try {
-        syncReadButtons(adapter.assistantTurns(), (turn) => speakElement(adapter.contentOfTurn(turn)));
+        syncReadButtons(adapter.assistantTurns(), "answer", (turn) => speakElement(adapter.contentOfTurn(turn)));
+        syncReadButtons(
+          adapter.userTurns(),
+          "question",
+          (turn) => speakElement(adapter.contentOfUserTurn(turn), questionStyleId())
+        );
       } catch (e) {
         warn("UI", "ボタン差し込みに失敗", e);
       }

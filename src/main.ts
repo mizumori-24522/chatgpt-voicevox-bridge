@@ -71,8 +71,11 @@ function main(): void {
     maximumChunkLength: settings.maximumChunkLength,
   });
 
-  /** 指定した要素の内容を、今の設定で整形してから最初から読み上げる */
-  function speakElement(el: Element): void {
+  /**
+   * 指定した要素の内容を、今の設定で整形してから最初から読み上げる。
+   * styleId を渡すと、その話者で読む（省略時は今選んでいる話者）。
+   */
+  function speakElement(el: Element, styleId?: number): void {
     stopSpeaking();
     const text = extractSpeechText(el, sanitizeOptions());
     if (!text) {
@@ -81,7 +84,13 @@ function main(): void {
     }
     const chunker = new SpeechChunker(chunkerOptions());
     chunker.append(text);
-    for (const c of chunker.take(true)) queue.enqueue(c);
+    for (const c of chunker.take(true)) queue.enqueue(c, styleId);
+  }
+
+  /** 自分の質問を読む声。選んでいない、または今のエンジンに無い話者なら回答と同じ声 */
+  function questionStyleId(): number | undefined {
+    const id = settings.questionStyleId;
+    return id !== null && styleOptions.some((o) => o.styleId === id) ? id : undefined;
   }
 
   function speakSelection(): void {
@@ -159,7 +168,7 @@ function main(): void {
   adapter.onSubmit(() => observer.notifySubmitted());
   void connect();
 
-  // 過去の回答へ「この回答を読む」ボタンを差し込む。
+  // 過去の回答と質問へ「この回答を読む」「この質問を読む」ボタンを差し込む。
   // 会話は仮想化されるので、新しく現れたターンへ定期的に付け直す。
   window.setInterval(() => {
     try {
@@ -169,7 +178,10 @@ function main(): void {
     }
     if (!settings.enabled) return;
     try {
-      syncReadButtons(adapter.assistantTurns(), (turn) => speakElement(adapter.contentOfTurn(turn)));
+      syncReadButtons(adapter.assistantTurns(), 'answer', (turn) => speakElement(adapter.contentOfTurn(turn)));
+      syncReadButtons(adapter.userTurns(), 'question', (turn) =>
+        speakElement(adapter.contentOfUserTurn(turn), questionStyleId()),
+      );
     } catch (e) {
       warn('UI', 'ボタン差し込みに失敗', e);
     }

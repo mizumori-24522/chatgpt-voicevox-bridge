@@ -721,6 +721,18 @@ describe('新しい ChatGPT の DOM 構造', () => {
     observer.stop();
   });
 
+  it('finds each question and reads only the text inside its bubble', () => {
+    const a = new ChatGptAdapter();
+    newTurn('t1', 'q1', 'a1');
+    const unit = document.querySelector<HTMLElement>('[data-content-search-unit-key="t1:0:user"]')!;
+    unit.innerHTML =
+      '<div><div data-user-message-bubble="true"><div>Sep 7 2026 - 00:14:55</div>' +
+      '<div class="whitespace-pre-wrap">質問の本文です。</div></div>' +
+      '<button aria-label="メッセージをコピーする">コピー</button></div>';
+    expect(a.userTurns()).toEqual([unit]);
+    expect(a.contentOfUserTurn(unit).textContent).toBe('質問の本文です。');
+  });
+
   it('adds a read button to every answer', () => {
     const a = new ChatGptAdapter();
     newTurn('t1', 'q1', 'a1');
