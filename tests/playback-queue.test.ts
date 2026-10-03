@@ -145,6 +145,18 @@ describe('PlaybackQueue', () => {
     expect(FakeAudio.maxConcurrent).toBe(1);
   });
 
+  it('reads a chunk with the voice given to it, and the rest with the selected voice', async () => {
+    const { queue, client } = setup();
+    queue.enqueue('質問です。', 8);
+    queue.enqueue('回答です。');
+    await tick(120);
+    const calls = (client.synthesize as ReturnType<typeof vi.fn>).mock.calls.map((c) => [c[0], c[1]]);
+    expect(calls).toEqual([
+      ['質問です。', 8],
+      ['回答です。', 1],
+    ]);
+  });
+
   it('accepts new text after a stop', async () => {
     const { queue, spoken } = setup();
     queue.enqueue('古い。');

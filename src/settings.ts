@@ -5,6 +5,8 @@ export type Settings = {
   enabled: boolean;
   styleId: number | null;
   speakerLabel: string;
+  /** 自分の質問を読むときの話者。null なら回答と同じ声 */
+  questionStyleId: number | null;
   /** 最近使ったスタイル ID（新しい順、最大 5） */
   recentStyleIds: number[];
   /** お気に入りのキャラ（speaker_uuid） */
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   styleId: null,
   speakerLabel: '',
+  questionStyleId: null,
   recentStyleIds: [],
   favoriteSpeakers: [],
   collapsedPickerGroups: [],

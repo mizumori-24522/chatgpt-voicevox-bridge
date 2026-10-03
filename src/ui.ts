@@ -33,6 +33,7 @@ const CSS = `
 .body.hidden { display: none; }
 .row { display: flex; align-items: center; gap: 6px; }
 .row > label { flex: none; opacity: .8; }
+.slot { flex: 1; min-width: 0; }
 select, input[type=number] { flex: 1; min-width: 0; font: inherit; padding: 2px 4px;
   border: 1px solid #ccc; border-radius: 6px; background: #fff; color: inherit; }
 input[type=range] { flex: 1; min-width: 0; }
@@ -63,6 +64,7 @@ export class UiPanel {
   private el!: Record<string, HTMLElement>;
   private collapsed = false;
   private picker!: VoicePicker;
+  private questionPicker!: VoicePicker;
 
   constructor(
     private settings: Settings,
@@ -89,6 +91,10 @@ export class UiPanel {
       </div>
       <div class="body" id="body">
         <div class="row" id="voiceSlot"></div>
+        <div class="row" title="自分の質問を「🔊 この質問を読む」で読むときの声">
+          <label>質問</label>
+          <div class="slot" id="questionVoiceSlot"></div>
+        </div>
         <div class="row">
           <label>話速</label>
           <input type="range" id="speed" min="0.5" max="2" step="0.05">
@@ -154,6 +160,7 @@ export class UiPanel {
     const q = <T extends HTMLElement>(id: string) => this.root.getElementById(id) as T;
     this.el = {
       dot: q('dot'), conn: q('conn'), body: q('body'), voiceSlot: q('voiceSlot'),
+      questionVoiceSlot: q('questionVoiceSlot'),
       speed: q('speed'), speedVal: q('speedVal'), volume: q('volume'),
       volumeVal: q('volumeVal'), gap: q('gap'), gapVal: q('gapVal'),
       toggle: q('toggle'), stop: q('stop'),
@@ -167,6 +174,7 @@ export class UiPanel {
       this.collapsed = !this.collapsed;
       this.el.body.classList.toggle('hidden', this.collapsed);
       this.picker.close();
+      this.questionPicker.close();
     });
 
     this.el.toggle.addEventListener('click', () => this.cb.onToggleEnabled(!this.settings.enabled));
@@ -189,8 +197,27 @@ export class UiPanel {
         }),
       onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
       onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups }),
+      onOpen: () => this.questionPicker.close(),
     });
     this.el.voiceSlot.appendChild(this.picker.element);
+
+    // 自分の質問を読むときの声。選ばなければ回答と同じ声で読む
+    this.questionPicker = new VoicePicker({
+      root: this.root,
+      host: this.host,
+      loadIcon: this.cb.loadIcon,
+      compact: true,
+      emptyLabel: '回答と同じ声',
+      onSelect: (opt) =>
+        this.cb.onChange({
+          questionStyleId: opt.styleId,
+          recentStyleIds: pushRecent(this.settings.recentStyleIds, opt.styleId),
+        }),
+      onFavoritesChange: (favoriteSpeakers) => this.cb.onChange({ favoriteSpeakers }),
+      onCollapsedChange: (collapsedPickerGroups) => this.cb.onChange({ collapsedPickerGroups }),
+      onOpen: () => this.picker.close(),
+    });
+    this.el.questionVoiceSlot.appendChild(this.questionPicker.element);
 
     const range = (key: 'speedScale' | 'volumeScale', input: HTMLElement, out: HTMLElement): void => {
       input.addEventListener('input', () => {
@@ -247,10 +274,13 @@ export class UiPanel {
     this.el.toggle.classList.toggle('on', s.enabled);
     this.picker.setPrefs(s.recentStyleIds, s.favoriteSpeakers, s.collapsedPickerGroups);
     this.picker.setSelected(s.styleId);
+    this.questionPicker.setPrefs(s.recentStyleIds, s.favoriteSpeakers, s.collapsedPickerGroups);
+    this.questionPicker.setSelected(s.questionStyleId);
   }
 
   setSpeakers(options: StyleOption[], selectedId: number | null): void {
     this.picker.setOptions(options, selectedId);
+    this.questionPicker.setOptions(options, this.settings.questionStyleId);
   }
 
   setConnection(state: ConnectionState, text: string): void {

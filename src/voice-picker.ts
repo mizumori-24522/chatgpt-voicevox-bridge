@@ -20,6 +20,12 @@ export type PickerDeps = {
   onFavoritesChange: (favorites: string[]) => void;
   /** 区分の開け閉め。引数は変更後の「畳んでいる区分」一覧 */
   onCollapsedChange: (collapsed: PickerGroup[]) => void;
+  /** 何も選ばれていないときにボタンへ出す文言（既定は「話者を選んでください」） */
+  emptyLabel?: string;
+  /** パネルの中で場所を取らない小さいボタンにする */
+  compact?: boolean;
+  /** メニューを開いたとき。もう一方のメニューを閉じるために使う */
+  onOpen?: () => void;
 };
 
 /** 左の列の区分 */
@@ -45,6 +51,11 @@ export const PICKER_CSS = `
 .voice .who b { display: block; font-size: 13px; }
 .voice .who span { font-size: 11px; opacity: .75; }
 .voice .caret { opacity: .6; }
+.voice.compact { gap: 6px; padding: 3px 6px; border-radius: 8px; }
+.voice.compact .face { width: 24px; height: 24px; border-radius: 6px; }
+.voice.compact .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice.compact .who b { display: inline; font-size: 12px; margin-right: 4px; }
+.voice.compact .face:not([src]) { display: none; }
 .face { flex: none; width: 28px; height: 28px; border-radius: 8px; object-fit: cover;
   background: rgba(127,127,127,.15); }
 
@@ -113,7 +124,7 @@ export class VoicePicker {
 
   constructor(private deps: PickerDeps) {
     this.trigger = document.createElement('button');
-    this.trigger.className = 'voice';
+    this.trigger.className = deps.compact ? 'voice compact' : 'voice';
     this.trigger.type = 'button';
     this.trigger.innerHTML = `
       <img class="face" alt="">
@@ -189,7 +200,7 @@ export class VoicePicker {
     const style = this.trigger.querySelector('.who span')!;
 
     if (!opt) {
-      name.textContent = this.characters.length ? '話者を選んでください' : '話者なし';
+      name.textContent = this.characters.length ? (this.deps.emptyLabel ?? '話者を選んでください') : '話者なし';
       style.textContent = '';
       face.removeAttribute('src');
       return;
@@ -215,6 +226,7 @@ export class VoicePicker {
 
   private open(): void {
     if (this.characters.length === 0) return;
+    this.deps.onOpen?.();
     this.panel.hidden = false;
     this.search.value = '';
     this.activeChar = this.find(this.selectedId)?.speakerUuid ?? this.characters[0].uuid;

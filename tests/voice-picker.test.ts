@@ -289,3 +289,45 @@ describe('VoicePicker 区分を畳む', () => {
     expect(chars()).toEqual(['ずんだもん']);
   });
 });
+
+describe('VoicePicker 質問用の小さいボタン', () => {
+  function make(deps: { emptyLabel?: string; compact?: boolean; onOpen?: () => void }) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    const picker = new VoicePicker({
+      root,
+      host,
+      loadIcon: async () => null,
+      onSelect: () => {},
+      onFavoritesChange: () => {},
+      onCollapsedChange: () => {},
+      ...deps,
+    });
+    root.appendChild(picker.element);
+    picker.setOptions(OPTIONS, null);
+    return { picker, panel: root.querySelector<HTMLElement>('.picker')! };
+  }
+
+  it('shows its own wording while nothing is chosen', () => {
+    const { picker } = make({ emptyLabel: '回答と同じ声', compact: true });
+    expect(picker.element.querySelector('.who b')!.textContent).toBe('回答と同じ声');
+    expect(picker.element.classList.contains('compact')).toBe(true);
+    picker.setSelected(3);
+    expect(picker.element.querySelector('.who b')!.textContent).toBe('ずんだもん');
+  });
+
+  it('keeps the default wording and size when not asked otherwise', () => {
+    const { picker } = make({});
+    expect(picker.element.querySelector('.who b')!.textContent).toBe('話者を選んでください');
+    expect(picker.element.classList.contains('compact')).toBe(false);
+  });
+
+  it('tells the owner when it opens, so the other menu can be closed', () => {
+    const onOpen = vi.fn();
+    const { picker, panel } = make({ onOpen });
+    picker.element.click();
+    expect(panel.hidden).toBe(false);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+});

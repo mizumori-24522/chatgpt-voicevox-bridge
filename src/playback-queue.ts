@@ -28,7 +28,7 @@ const WAIT_TIMEOUT_MS = 150;
  * 次の文の合成が進む。再生は常に 1 本だけで、音声は重ならない。
  */
 export class PlaybackQueue {
-  private textQueue: string[] = [];
+  private textQueue: { text: string; styleId?: number }[] = [];
   private audioQueue: ArrayBuffer[] = [];
   private synthRunning = false;
   private playRunning = false;
@@ -41,10 +41,11 @@ export class PlaybackQueue {
 
   constructor(private deps: QueueDeps) {}
 
-  enqueue(text: string): void {
+  /** styleId を渡すと、そのチャンクだけ指定の話者で読む（省略時は今選んでいる話者） */
+  enqueue(text: string, styleId?: number): void {
     const t = text.trim();
     if (!t) return;
-    this.textQueue.push(t);
+    this.textQueue.push({ text: t, styleId });
     log('Playback', 'enqueue', t.slice(0, 40));
     this.notify();
     this.emit();
@@ -125,14 +126,14 @@ export class PlaybackQueue {
           continue;
         }
 
-        const styleId = this.deps.getStyleId();
+        const styleId = this.textQueue[0].styleId ?? this.deps.getStyleId();
         if (styleId === null) {
           this.deps.onError('話者が選択されていません');
           this.textQueue = [];
           break;
         }
 
-        const text = this.textQueue.shift()!;
+        const { text } = this.textQueue.shift()!;
         this.abortController = new AbortController();
         try {
           const wav = await this.deps.client.synthesize(
