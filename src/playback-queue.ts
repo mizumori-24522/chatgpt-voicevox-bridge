@@ -14,6 +14,10 @@ export type QueueDeps = {
 export type PlaybackSnapshot = {
   queued: number;
   speaking: boolean;
+  /** 一時停止中か */
+  paused: boolean;
+  /** 読んでいる途中の文も、これから読む文も無い */
+  idle: boolean;
 };
 
 /** 再生中に先読み合成しておくチャンク数。文と文の間の無音をなくすための肝。 */
@@ -34,6 +38,9 @@ export class PlaybackQueue {
   private playRunning = false;
   private currentAudio: HTMLAudioElement | null = null;
   private currentUrl: string | null = null;
+  /** 今の文を読み終えたことにして次へ進む。再開に失敗したときに使う */
+  private finishCurrent: (() => void) | null = null;
+  private paused = false;
   private abortController: AbortController | null = null;
   private waiters: (() => void)[] = [];
   /** stopAll のたびに増やす。世代が違う非同期処理は破棄する。 */
@@ -53,8 +60,42 @@ export class PlaybackQueue {
     void this.playLoop();
   }
 
+  /**
+   * 一時停止。今の文はその場で止め、続きは resume まで流さない。
+   * 止めている間に増えた文（生成中の回答の続きなど）も貯めておき、再開したら続けて読む。
+   * 何も読んでいないときは何もしない。止めたまま忘れて、次の回答が黙ってしまうのを防ぐため。
+   */
+  pause(): void {
+    if (this.paused || this.isIdle()) return;
+    this.paused = true;
+    this.currentAudio?.pause();
+    log('Playback', 'pause');
+    this.emit();
+  }
+
+  /** 一時停止を解いて、止めた位置から続きを読む */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    log('Playback', 'resume');
+    const audio = this.currentAudio;
+    if (audio) {
+      audio.play().catch((e) => {
+        if (this.paused || this.currentAudio !== audio) return;
+        warn('Playback', 'resume rejected', e);
+        this.deps.onError('再生がブロックされました。ページを一度クリックしてください');
+        this.finishCurrent?.();
+      });
+    }
+    this.notify();
+    this.emit();
+    void this.playLoop();
+  }
+
+  /** 止める・読み直す・新しい質問では、一時停止も解く（新しく読むものが黙らないように） */
   stopAll(): void {
     this.generation++;
+    this.paused = false;
     this.textQueue = [];
     this.audioQueue = [];
     this.abortController?.abort();
@@ -71,7 +112,19 @@ export class PlaybackQueue {
     return {
       queued: this.textQueue.length + this.audioQueue.length,
       speaking: this.currentAudio !== null,
+      paused: this.paused,
+      idle: this.isIdle(),
     };
+  }
+
+  private isIdle(): boolean {
+    return (
+      this.currentAudio === null &&
+      !this.synthRunning &&
+      !this.playRunning &&
+      this.textQueue.length === 0 &&
+      this.audioQueue.length === 0
+    );
   }
 
   private emit(): void {
@@ -105,6 +158,7 @@ export class PlaybackQueue {
       this.currentAudio.src = '';
       this.currentAudio = null;
     }
+    this.finishCurrent = null;
     if (this.currentUrl) {
       URL.revokeObjectURL(this.currentUrl);
       this.currentUrl = null;
@@ -173,6 +227,11 @@ export class PlaybackQueue {
 
     try {
       while (gen === this.generation) {
+        // 一時停止中は次の文へ進まない（合成の先読みは続ける）
+        if (this.paused) {
+          await this.wait();
+          continue;
+        }
         if (this.audioQueue.length === 0) {
           // まだ合成中なら待つ。合成もテキストも無ければ終了。
           if (!this.synthRunning && this.textQueue.length === 0) break;
@@ -201,13 +260,17 @@ export class PlaybackQueue {
       this.currentUrl = url;
       this.emit();
 
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
         if (this.currentAudio === audio) this.teardownAudio();
         else URL.revokeObjectURL(url);
         this.notify();
         this.emit();
         resolve();
       };
+      this.finishCurrent = finish;
 
       audio.onended = finish;
       audio.onerror = () => {
@@ -217,6 +280,8 @@ export class PlaybackQueue {
       };
 
       audio.play().catch((e) => {
+        // 再生が始まる前に一時停止した。この文は捨てず、再開のときに頭から読む
+        if (this.paused && this.currentAudio === audio) return;
         warn('Playback', 'play() rejected', e);
         this.deps.onError('再生がブロックされました。ページを一度クリックしてください');
         finish();

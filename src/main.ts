@@ -37,7 +37,9 @@ function main(): void {
       if (msg.includes('接続')) void connect();
     },
     onStateChange: (s) => {
-      if (!s.speaking && s.queued === 0) ui.setStatus('');
+      ui.setPlayback(s);
+      if (s.paused) ui.setStatus(`一時停止中（待ち ${s.queued}）`);
+      else if (!s.speaking && s.queued === 0) ui.setStatus('');
       else ui.setStatus(`${s.speaking ? '読み上げ中' : '合成中'}（待ち ${s.queued}）`);
     },
   });
@@ -51,6 +53,7 @@ function main(): void {
       }
     },
     onStop: () => stopSpeaking(),
+    onTogglePause: () => (queue.snapshot.paused ? queue.resume() : queue.pause()),
     onReconnect: () => void connect(),
     onTestSpeak: () => queue.enqueue('ボイスボックス接続テストです。'),
     onSpeakSelection: () => speakSelection(),

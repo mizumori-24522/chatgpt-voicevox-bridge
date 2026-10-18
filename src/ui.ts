@@ -1,10 +1,12 @@
 import type { Settings } from './settings';
 import type { StyleOption } from './voicevox-client';
+import type { PlaybackSnapshot } from './playback-queue';
 import { VoicePicker, PICKER_CSS, pushRecent } from './voice-picker';
 
 export type UiCallbacks = {
   onToggleEnabled: (v: boolean) => void;
   onStop: () => void;
+  onTogglePause: () => void;
   onReconnect: () => void;
   onTestSpeak: () => void;
   onSpeakSelection: () => void;
@@ -42,6 +44,9 @@ input[type=range] { flex: 1; min-width: 0; }
 .btn:hover { filter: brightness(.96); }
 .btn.on { background: #22c55e; border-color: #22c55e; color: #fff; }
 .btn.stop { background: #ef4444; border-color: #ef4444; color: #fff; }
+.btn.paused { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.btn.fit { flex: none; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
 .status { font-size: 11px; opacity: .8; min-height: 15px; }
 .status.err { color: #ef4444; opacity: 1; }
 .val { flex: none; width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -55,6 +60,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
   .btn { background: #2b2c2f; border-color: #4a4a4a; color: #ececec; }
   .btn.on { background: #22c55e; border-color: #22c55e; color: #fff; }
   .btn.stop { background: #ef4444; border-color: #ef4444; color: #fff; }
+  .btn.paused { background: #f59e0b; border-color: #f59e0b; color: #fff; }
 }
 `;
 
@@ -111,7 +117,8 @@ export class UiPanel {
           <span class="val" id="gapVal"></span>
         </div>
         <div class="row">
-          <button class="btn" id="toggle">🔊 ON</button>
+          <button class="btn fit" id="toggle">🔊 ON</button>
+          <button class="btn" id="pause" disabled title="今の文で止め、続きは「再開」で読みます">⏸ 一時停止</button>
           <button class="btn stop" id="stop">■ STOP</button>
         </div>
         <div class="row">
@@ -163,7 +170,7 @@ export class UiPanel {
       questionVoiceSlot: q('questionVoiceSlot'),
       speed: q('speed'), speedVal: q('speedVal'), volume: q('volume'),
       volumeVal: q('volumeVal'), gap: q('gap'), gapVal: q('gapVal'),
-      toggle: q('toggle'), stop: q('stop'),
+      toggle: q('toggle'), pause: q('pause'), stop: q('stop'),
       status: q('status'), codeMode: q('codeMode'), urlMode: q('urlMode'),
       tableMode: q('tableMode'), stopOnNew: q('stopOnNew'), debug: q('debug'),
       readSymbols: q('readSymbols'), readOnOpen: q('readOnOpen'),
@@ -179,6 +186,7 @@ export class UiPanel {
 
     this.el.toggle.addEventListener('click', () => this.cb.onToggleEnabled(!this.settings.enabled));
     this.el.stop.addEventListener('click', () => this.cb.onStop());
+    this.el.pause.addEventListener('click', () => this.cb.onTogglePause());
     this.el.test.addEventListener('click', () => this.cb.onTestSpeak());
     // mousedown で選択が消える環境があるため、押す前の選択を保持する
     this.el.speakSel.addEventListener('mousedown', (e) => e.preventDefault());
@@ -281,6 +289,14 @@ export class UiPanel {
   setSpeakers(options: StyleOption[], selectedId: number | null): void {
     this.picker.setOptions(options, selectedId);
     this.questionPicker.setOptions(options, this.settings.questionStyleId);
+  }
+
+  /** 再生の状態に合わせて一時停止ボタンを切り替える。読むものが無いときは押せない */
+  setPlayback(s: PlaybackSnapshot): void {
+    const btn = this.el.pause as HTMLButtonElement;
+    btn.textContent = s.paused ? '▶ 再開' : '⏸ 一時停止';
+    btn.classList.toggle('paused', s.paused);
+    btn.disabled = s.idle && !s.paused;
   }
 
   setConnection(state: ConnectionState, text: string): void {
