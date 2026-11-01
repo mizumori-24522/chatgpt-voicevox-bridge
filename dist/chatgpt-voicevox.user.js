@@ -1542,6 +1542,10 @@ ${el.textContent ?? ""}
 .head { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   border-bottom: 1px solid rgba(128,128,128,.25); cursor: pointer; }
 .title { font-weight: 600; flex: 1; }
+.panel.mini { width: auto; }
+.panel.mini .head { border-bottom: none; padding: 6px 12px; }
+.panel.mini .title { flex: none; }
+.panel.mini #conn { display: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #999; flex: none; }
 .dot.connected { background: #22c55e; }
 .dot.connecting { background: #eab308; }
@@ -1698,6 +1702,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
       this.root.querySelector(".head").addEventListener("click", () => {
         this.collapsed = !this.collapsed;
         this.el.body.classList.toggle("hidden", this.collapsed);
+        panel.classList.toggle("mini", this.collapsed);
         this.picker.close();
         this.questionPicker.close();
       });
@@ -1805,6 +1810,7 @@ details summary { cursor: pointer; opacity: .8; font-size: 11px; }
     setConnection(state, text) {
       this.el.dot.className = `dot ${state}`;
       this.el.conn.textContent = text;
+      this.el.conn.parentElement.title = `VOICEVOX ${text}`;
     }
     setStatus(text, isError = false) {
       this.el.status.textContent = text;
