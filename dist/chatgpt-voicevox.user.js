@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT → VOICEVOX Bridge
 // @namespace    local.chatgpt-voicevox-bridge
-// @version      0.5.0
+// @version      0.5.1
 // @author       mizumori-24522
 // @description  ChatGPT Web の回答を VOICEVOX で逐次読み上げする
 // @homepageURL  https://github.com/mizumori-24522/chatgpt-voicevox-bridge
